@@ -1,0 +1,9 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Ruff cache
+.ruff_cache/
+
+# Built image artifacts
+*.tar

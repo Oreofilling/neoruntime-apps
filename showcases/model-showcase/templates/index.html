@@ -1,0 +1,2371 @@
+{% extends "base.html" %}
+
+{% block title %}NE503 AI Showcase{% endblock %}
+
+{% block body %}
+<script>window.HD_PREVIEW = {{ hd_preview | tojson }};</script>
+<!-- ============ Landing View ============ -->
+<div id="landing-view">
+  <header class="landing-header">
+    <div class="app-logo">NE503</div>
+    <div class="health-dot" id="health-dot-landing"></div>
+  </header>
+
+  <div class="landing-hero">
+    <div class="landing-sphere"></div>
+    <div class="landing-hero-text">
+      <h1 class="landing-title">AI Model Showcase</h1>
+      <p class="landing-subtitle">On-device inference powered by NPU &mdash; select a model to explore real-time AI capabilities</p>
+    </div>
+  </div>
+
+  <div class="model-grid" id="model-grid"></div>
+
+  <div class="landing-footer">
+    <a href="/chat" class="landing-chat-link">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      GenAI Chat
+    </a>
+  </div>
+</div>
+
+<!-- ============ Demo View ============ -->
+<div id="demo-view" style="display:none">
+  <header class="app-header">
+    <a class="back-btn" id="back-btn" title="Back to models">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      Models
+    </a>
+    <div class="health-dot" id="health-dot"></div>
+    <div class="health-badge" id="health-badge">OK</div>
+    <div style="flex:1"></div>
+    <!-- Model switcher in header (replaces demo-model-name) -->
+    <div class="header-model-switcher" id="stream-model-switcher">
+      <button class="switcher-trigger" id="switcher-trigger">
+        <span class="switcher-current" id="switcher-current">--</span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <div class="switcher-dropdown" id="switcher-dropdown"></div>
+    </div>
+    <a href="/chat" class="nav-link" id="chat-link">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Chat
+    </a>
+    <div class="source-toggle" id="source-toggle">
+      <button class="source-btn active" id="source-camera" title="Camera">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+      </button>
+      <button class="source-btn" id="source-video" title="Import Video">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+      </button>
+      <button class="source-btn" id="source-image" title="Image Inference">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+      </button>
+    </div>
+    <div class="output-toggle" id="output-toggle">
+      <button class="output-btn active" id="output-mjpeg" title="MJPEG 360p preview (Python)">MJPEG</button>
+      <button class="output-btn" id="output-rtsp" title="1080P hardware H.264 preview (MSE)">HD 1080P</button>
+      <button class="output-btn" id="output-both" title="Both" style="display:none">Both</button>
+    </div>
+  </header>
+
+  <main class="app-main">
+    <div class="stream-section">
+      <div class="ambient-glow"></div>
+      <div class="stream-wrapper" id="stream-wrapper">
+        <img id="stream-img" src="" alt="" />
+        <canvas id="overlay-canvas"></canvas>
+
+        <!-- HD 1080P hardware preview (platform-api /api/v1/h264/main via MSE).
+             The AI overlay (detection boxes) is baked into the H.264 stream by
+             camera-daemon's encoder-scoped OSD, which consumes event-bus
+             inference results — so HD needs zero Python/CPU rendering. -->
+        <video id="hd-video" autoplay muted playsinline
+               style="display:none;position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000;z-index:2"></video>
+        <!-- Client-side AI overlay for HD: detection/class/keypoint/OCR boxes drawn
+             from the same /api/events SSE data as MJPEG (apply_overlay is skipped on
+             the Hailo auto_feed encode path, so camera-daemon can't burn them in).
+             Same z-index as the video but later in DOM order → paints on top;
+             #hd-stats/#hd-badge (z:3) stay above it. Backing store = video intrinsic. -->
+        <canvas id="hd-overlay-canvas"
+               style="display:none;position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2"></canvas>
+        <div id="hd-stats"
+             style="display:none;position:absolute;left:0;right:0;bottom:0;height:28px;background:rgba(0,0,0,.6);color:#00ffff;font:11px monospace;line-height:28px;padding:0 10px;pointer-events:none;z-index:3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
+        <div id="hd-badge"
+             style="display:none;position:absolute;top:8px;right:8px;background:rgba(0,0,0,.72);color:#ffb84d;font:11px monospace;padding:4px 8px;border-radius:4px;pointer-events:none;z-index:3"></div>
+
+        <!-- Loading overlay -->
+        <div class="stream-overlay" id="loading">
+          <div class="spinner"></div>
+          <span>Connecting</span>
+          <div class="switching-label" id="switching-label">Loading model...</div>
+        </div>
+
+        <!-- Model loading overlay -->
+        <div class="model-loading-overlay" id="model-loading-overlay">
+          <div class="model-loading-content">
+            <div class="model-loading-spinner"></div>
+            <div class="model-loading-name" id="model-loading-name">--</div>
+            <div class="model-loading-step" id="model-loading-step">Preparing...</div>
+            <div class="model-loading-bar"><div class="model-loading-bar-fill" id="model-loading-bar-fill"></div></div>
+          </div>
+        </div>
+
+        <!-- RTSP info bar -->
+        <div class="rtsp-info-bar" id="rtsp-info-bar" style="display:none">
+          <span class="rtsp-label">RTSP</span>
+          <code class="rtsp-url" id="rtsp-url-display"></code>
+          <button class="rtsp-copy-btn" id="rtsp-copy-btn" title="Copy URL">Copy</button>
+        </div>
+
+        <!-- Lens control panel -->
+        <div class="lens-panel" id="lens-panel">
+          <button class="lens-toggle-btn" id="lens-toggle-btn" title="Lens controls">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.5"/><circle cx="12" cy="12" r="8"/><line x1="12" y1="1" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="23"/><line x1="1" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="23" y2="12"/></svg>
+          </button>
+          <div class="lens-body" id="lens-body">
+            <div class="lens-title">Lens Control</div>
+            <!-- Zoom -->
+            <div class="lens-control-group">
+              <div class="lens-row-header">
+                <span class="lens-row-label">Zoom</span>
+                <span class="lens-badge" id="lens-zoom-badge">1.0x</span>
+              </div>
+              <div class="lens-slider-row">
+                <button class="lens-step-btn" id="lens-zoom-minus" title="Zoom out">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                </button>
+                <input type="range" class="lens-range" id="lens-zoom-range" min="0" max="100" value="0" />
+                <button class="lens-step-btn" id="lens-zoom-plus" title="Zoom in">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                </button>
+              </div>
+            </div>
+            <!-- Focus -->
+            <div class="lens-control-group">
+              <div class="lens-row-header">
+                <span class="lens-row-label">Focus</span>
+                <span class="lens-badge" id="lens-focus-badge">0%</span>
+              </div>
+              <div class="lens-slider-row">
+                <button class="lens-step-btn" id="lens-focus-minus" title="Focus near">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                </button>
+                <input type="range" class="lens-range" id="lens-focus-range" min="0" max="100" value="0" />
+                <button class="lens-step-btn" id="lens-focus-plus" title="Focus far">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                </button>
+              </div>
+            </div>
+            <!-- One-shot AF -->
+            <div class="lens-af-row">
+              <span class="lens-row-label">One-shot AF</span>
+              <button class="lens-af-btn" id="lens-af-btn" title="Trigger auto focus">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/><line x1="12" y1="1" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="23"/><line x1="1" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="23" y2="12"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Video import panel -->
+      <div class="video-panel" id="video-panel" style="display:none">
+        <div class="video-upload-zone" id="video-upload-zone">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <span class="video-upload-text">Drop video file or click to upload</span>
+          <span class="video-upload-hint">MP4 / AVI / MKV / MOV (max 500MB)</span>
+          <input type="file" id="video-file-input" accept="video/*" style="display:none" />
+        </div>
+        <div class="video-controls" id="video-controls" style="display:none">
+          <div class="video-progress-row">
+            <span class="video-time" id="video-time-current">0:00</span>
+            <div class="video-progress-bar" id="video-progress-bar">
+              <div class="video-progress-fill" id="video-progress-fill"></div>
+            </div>
+            <span class="video-time" id="video-time-total">0:00</span>
+          </div>
+          <div class="video-btn-row">
+            <button class="video-ctrl-btn" id="video-play" title="Play/Pause">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            </button>
+            <button class="video-ctrl-btn" id="video-restart" title="Restart">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+            </button>
+            <div class="video-speed-group">
+              <button class="video-speed-btn" data-speed="0.5">0.5x</button>
+              <button class="video-speed-btn active" data-speed="1">1x</button>
+              <button class="video-speed-btn" data-speed="2">2x</button>
+            </div>
+            <button class="video-ctrl-btn video-stop-btn" id="video-stop" title="Stop video, return to camera">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Image inference panel (one-shot) -->
+      <div class="video-panel" id="image-panel" style="display:none">
+        <div class="video-upload-zone" id="image-upload-zone">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+          <span class="video-upload-text">Drop image file or click to upload</span>
+          <span class="video-upload-hint">JPG / PNG / BMP / WEBP (max 50MB) — single-shot inference</span>
+          <input type="file" id="image-file-input" accept="image/*" style="display:none" />
+        </div>
+        <div id="image-result-wrap" style="display:none">
+          <div class="image-btn-row" style="margin-top:8px;display:flex;gap:8px">
+            <button class="video-ctrl-btn" id="image-rerun" title="Upload another image">New image</button>
+            <button class="video-ctrl-btn video-stop-btn" id="image-back" title="Return to live camera">Back to live</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="metrics-grid">
+      <div class="metric-card">
+        <svg class="metric-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        <div class="metric-info">
+          <div class="metric-label">Model</div>
+          <div class="stat-value" id="stat-model">--</div>
+        </div>
+      </div>
+      <div class="metric-card" id="npu-latency-card">
+        <svg class="metric-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <div class="metric-info">
+          <div class="metric-label">NPU Latency</div>
+          <div class="metric-value"><span class="stat-value" id="stat-hw-infer">--</span> <span class="metric-unit">ms</span></div>
+          <div class="npu-fps-sub" id="latency-sub"></div>
+        </div>
+      </div>
+      <div class="metric-card" id="npu-fps-card">
+        <svg class="metric-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        <div class="metric-info">
+          <div class="metric-label">NPU FPS</div>
+          <div class="metric-value"><span class="stat-value" id="stat-npu-fps">--</span> <span class="metric-unit">fps</span></div>
+          <div class="npu-fps-sub" id="npu-fps-sub"></div>
+        </div>
+      </div>
+      <div class="metric-card">
+        <svg class="metric-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="2" x2="9" y2="4"/><line x1="15" y1="2" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="22"/><line x1="15" y1="20" x2="15" y2="22"/><line x1="20" y1="9" x2="22" y2="9"/><line x1="20" y1="14" x2="22" y2="14"/><line x1="2" y1="9" x2="4" y2="9"/><line x1="2" y1="14" x2="4" y2="14"/></svg>
+        <div class="metric-info">
+          <div class="metric-label">NPU</div>
+          <div class="stat-value" id="stat-npu">--</div>
+          <div class="npu-bar"><span class="npu-bar-fill" id="npu-bar-fill" style="width:0%"></span></div>
+        </div>
+      </div>
+      <div class="metric-card">
+        <svg class="metric-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        <div class="metric-info">
+          <div class="metric-label">Frames</div>
+          <div class="stat-value" id="stat-frame">--</div>
+        </div>
+      </div>
+    </div>
+    <!-- System resource metrics row -->
+    <div class="metrics-grid metrics-grid-sm" id="sys-metrics" style="margin-top:6px;">
+      <div class="metric-card metric-card-sm">
+        <div class="metric-info">
+          <div class="metric-label">CPU</div>
+          <div class="stat-value stat-sm" id="stat-cpu">--</div>
+        </div>
+      </div>
+      <div class="metric-card metric-card-sm">
+        <div class="metric-info">
+          <div class="metric-label">DSP</div>
+          <div class="stat-value stat-sm" id="stat-dsp">--</div>
+        </div>
+      </div>
+      <div class="metric-card metric-card-sm">
+        <div class="metric-info">
+          <div class="metric-label">NPU MEM</div>
+          <div class="stat-value stat-sm" id="stat-npu-mem">--</div>
+          <div class="npu-bar npu-bar-sm"><span class="npu-bar-fill" id="npu-mem-bar-fill" style="width:0%"></span></div>
+        </div>
+      </div>
+      <div class="metric-card metric-card-sm">
+        <div class="metric-info">
+          <div class="metric-label">RAM</div>
+          <div class="stat-value stat-sm" id="stat-ram">--</div>
+        </div>
+      </div>
+      <div class="metric-card metric-card-sm">
+        <div class="metric-info">
+          <div class="metric-label">Queue</div>
+          <div class="stat-value stat-sm" id="stat-queue">--</div>
+        </div>
+      </div>
+      <div class="metric-card metric-card-sm">
+        <div class="metric-info">
+          <div class="metric-label">Errors</div>
+          <div class="stat-value stat-sm" id="stat-errors">--</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="result-panel" id="result-panel">
+      <div class="panel-header">
+        <div class="panel-title" id="panel-title">Live Results</div>
+      </div>
+      <div class="panel-body" id="result-list">
+        <span style="color:var(--text-muted)">Waiting for inference...</span>
+      </div>
+    </div>
+
+    <div class="section-divider"></div>
+
+    <div class="clip-panel" id="clip-panel">
+      <label>CLIP Classification Labels</label>
+      <div class="clip-row">
+        <input type="text" class="clip-input" id="clip-input" placeholder="label1, label2, label3 ..." maxlength="500" />
+        <button class="btn btn-primary" id="clip-apply">Apply</button>
+      </div>
+      <div class="clip-hint">Comma-separated text prompts for zero-shot classification</div>
+    </div>
+
+    <div class="gallery-section" id="gallery-section">
+      <div class="tab-row">
+        <button class="tab-btn active" data-tab="search" id="tab-search">Text Search</button>
+        <button class="tab-btn" data-tab="browse" id="tab-browse">Gallery</button>
+      </div>
+      <div id="panel-search">
+        <div class="gallery-controls">
+          <input type="text" class="search-input" id="search-input" placeholder="Describe what you're looking for..." maxlength="200" />
+          <button class="btn btn-primary" id="search-btn">Search</button>
+        </div>
+        <div class="search-grid" id="search-results">
+          <div class="search-empty">Type a description and click Search to find matching images</div>
+        </div>
+      </div>
+      <div id="panel-browse" style="display:none">
+        <div class="gallery-controls">
+          <button class="btn btn-ghost btn-toggle" id="capture-toggle">Capture</button>
+          <span class="gallery-stats" id="gallery-stats-text">0 images</span>
+          <button class="btn btn-ghost" id="gallery-refresh">Refresh</button>
+          <button class="btn btn-danger" id="gallery-clear">Clear All</button>
+        </div>
+        <div class="search-grid" id="gallery-grid">
+          <div class="search-empty">Gallery is empty. Enable capture to start indexing frames.</div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="toast-container" id="toast-container"></div>
+
+<div class="modal-overlay" id="image-modal">
+  <div class="modal-content">
+    <button class="modal-close" id="modal-close">&times;</button>
+    <img id="modal-img" src="" alt="Full image" />
+    <div class="modal-meta" id="modal-meta"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+  function esc(s) {
+    var d = document.createElement('div');
+    d.appendChild(document.createTextNode(s));
+    return d.innerHTML;
+  }
+
+  function showToast(msg, type) {
+    type = type || 'info';
+    var container = document.getElementById('toast-container');
+    var el = document.createElement('div');
+    el.className = 'toast ' + type;
+    el.textContent = msg;
+    container.appendChild(el);
+    setTimeout(function() {
+      el.style.opacity = '0';
+      el.style.transition = 'opacity 0.3s';
+      setTimeout(function() { el.remove(); }, 300);
+    }, 4000);
+  }
+
+  // ── DOM refs ──
+  var landingView = document.getElementById('landing-view');
+  var demoView = document.getElementById('demo-view');
+  var modelGrid = document.getElementById('model-grid');
+  var backBtn = document.getElementById('back-btn');
+
+  var streamImg = document.getElementById('stream-img');
+  var overlayCanvas = document.getElementById('overlay-canvas');
+  var streamWrapper = document.getElementById('stream-wrapper');
+  var overlayCtx = overlayCanvas.getContext('2d', { willReadFrequently: true });
+  var loading = document.getElementById('loading');
+  var switchLabel = document.getElementById('switching-label');
+  var clipPanel = document.getElementById('clip-panel');
+  var clipInput = document.getElementById('clip-input');
+  var clipApply = document.getElementById('clip-apply');
+  var statModel = document.getElementById('stat-model');
+  var statHwInfer = document.getElementById('stat-hw-infer');
+  var statNpuFps = document.getElementById('stat-npu-fps');
+  var npuFpsCard = document.getElementById('npu-fps-card');
+  var statNpu = document.getElementById('stat-npu');
+  var npuBarFill = document.getElementById('npu-bar-fill');
+  var statS1 = document.getElementById('stat-s1');
+  var statS2 = document.getElementById('stat-s2');
+  var pipelineInfo = document.getElementById('pipeline-info');
+  var statFrame = document.getElementById('stat-frame');
+  var resultList = document.getElementById('result-list');
+  var panelTitle = document.getElementById('panel-title');
+  var healthDot = document.getElementById('health-dot');
+  var healthDotLanding = document.getElementById('health-dot-landing');
+  var healthBadge = document.getElementById('health-badge');
+  var switcherCurrent = document.getElementById('switcher-current');
+  var switcherTrigger = document.getElementById('switcher-trigger');
+  var switcherDropdown = document.getElementById('switcher-dropdown');
+  var switcherCurrent = document.getElementById('switcher-current');
+  var modelLoadingOverlay = document.getElementById('model-loading-overlay');
+  var modelLoadingName = document.getElementById('model-loading-name');
+  var modelLoadingStep = document.getElementById('model-loading-step');
+  var modelLoadingBarFill = document.getElementById('model-loading-bar-fill');
+
+  var currentModel = '';
+  var currentModelType = '';
+  var modelsData = [];
+  var reconnectTimer = null;
+  var statsTimer = null;
+  var healthTimer = null;
+  var eventSource = null;
+  var demoActive = false;
+  var latestSSEData = null;
+  var latestStatsData = null;
+
+  var TYPE_BADGE = {
+    detection: {label: 'Detection', cls: 'badge-det'},
+    classification: {label: 'Classify', cls: 'badge-cls'},
+    segmentation: {label: 'Segment', cls: 'badge-seg'},
+    keypoint: {label: 'Keypoint', cls: 'badge-kp'},
+    clip: {label: 'CLIP', cls: 'badge-clip'},
+    ocr_detection: {label: 'OCR', cls: 'badge-pipe'},
+    ocr_recognition: {label: 'OCR', cls: 'badge-pipe'},
+    pipeline_lpr: {label: 'Pipeline', cls: 'badge-pipe'},
+    pipeline_ocr: {label: 'Pipeline', cls: 'badge-pipe'},
+    embedding: {label: 'Embed', cls: 'badge-det'},
+    depth: {label: 'Depth', cls: 'badge-depth'},
+    genai: {label: 'GenAI', cls: 'badge-genai'},
+  };
+
+  var TYPE_ICONS = {
+    detection: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="12" cy="12" r="3"/><line x1="3" y1="9" x2="7" y2="9"/><line x1="17" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="7" y2="15"/><line x1="17" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="7"/><line x1="9" y1="17" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="7"/><line x1="15" y1="17" x2="15" y2="21"/></svg>',
+    classification: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 20h4l10-10-4-4L4 16z"/><line x1="14" y1="6" x2="18" y2="10"/></svg>',
+    segmentation: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>',
+    keypoint: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="5" r="2"/><circle cx="5" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><circle cx="8" cy="19" r="2"/><circle cx="16" cy="19" r="2"/><line x1="12" y1="7" x2="5" y2="10"/><line x1="12" y1="7" x2="19" y2="10"/><line x1="5" y1="14" x2="8" y2="17"/><line x1="19" y1="14" x2="16" y2="17"/></svg>',
+    clip: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 12l8-8"/><circle cx="20" cy="4" r="2"/></svg>',
+    pipeline_lpr: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="7" width="20" height="10" rx="2"/><line x1="6" y1="11" x2="6" y2="13"/><line x1="10" y1="11" x2="10" y2="13"/><line x1="14" y1="11" x2="14" y2="13"/><line x1="18" y1="11" x2="18" y2="13"/></svg>',
+    pipeline_ocr: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg>',
+    depth: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>',
+    genai: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
+  };
+
+  var PANEL_TITLES = {
+    detection: 'Detected Objects',
+    classification: 'Top Classifications',
+    segmentation: 'Segmentation Classes',
+    keypoint: 'Facial Features',
+    clip: 'CLIP Scores',
+    ocr_detection: 'OCR Results',
+    ocr_recognition: 'OCR Results',
+    pipeline_lpr: 'License Plates',
+    pipeline_ocr: 'Recognized Text',
+    embedding: 'Embedding Info',
+    depth: 'Depth Map'
+  };
+
+  function isPipeline(type) { return (type || '').startsWith('pipeline_'); }
+
+  function badgeHtml(type) {
+    var info = TYPE_BADGE[type] || {label: type || '?', cls: ''};
+    return '<span class="badge ' + info.cls + '">' + esc(info.label) + '</span>';
+  }
+
+  // ── View switching ──
+
+  function showLanding() {
+    landingView.style.display = '';
+    demoView.style.display = 'none';
+    demoActive = false;
+    stopDemoResources();
+    window.location.hash = '';
+  }
+
+  var _suppressHashChange = false;
+
+  function showDemo(modelId) {
+    landingView.style.display = 'none';
+    demoView.style.display = '';
+    demoActive = true;
+    _suppressHashChange = true;
+    window.location.hash = 'model=' + modelId;
+    startDemoResources(modelId);
+  }
+
+  function stopDemoResources() {
+    if (eventSource) { eventSource.close(); eventSource = null; }
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    if (statsTimer) { clearTimeout(statsTimer); statsTimer = null; }
+    stopLensPoll();
+    streamImg.src = '';
+    overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+  }
+
+  function onFirstFrame() {
+    loading.classList.add('hidden');
+    switchLabel.style.display = 'none';
+    hideModelLoading();
+  }
+
+  // ── Canvas overlay drawing ──
+
+  var OVERLAY_COLORS = [
+    '#30ff30','#30c8ff','#ffb430','#ff30b4',
+    '#b430ff','#30ffc8','#ffff30','#30b4ff',
+    '#ff7830','#78ff30','#c83030','#3030c8'
+  ];
+  // Segmentation palette — matches _PALETTE in main.py (RGB arrays)
+  var SEG_COLORS = [
+    [48,255,48],[48,200,255],[255,180,48],[255,48,180],
+    [180,48,255],[48,255,200],[255,255,48],[48,180,255],
+    [255,120,48],[120,255,48],[200,48,48],[48,48,200],
+    [200,200,48],[48,200,200],[200,48,200],[180,255,180],
+    [255,180,180],[180,180,255],[255,220,180],[220,180,255]
+  ];
+  // Inferno colormap (256 entries) — matches OpenCV COLORMAP_INFERNO
+  var INFERNO_LUT = [
+    [0,0,4],[1,0,5],[1,1,6],[1,1,8],[2,1,10],[2,2,12],[2,2,14],[3,2,16],
+    [4,3,18],[4,3,20],[5,4,23],[6,4,25],[7,5,27],[8,5,29],[9,6,31],[10,7,34],
+    [11,7,36],[12,8,38],[13,8,41],[14,9,43],[16,9,45],[17,10,48],[18,10,50],[20,11,52],
+    [21,11,55],[22,11,57],[24,12,60],[25,12,62],[27,12,65],[28,12,67],[30,12,69],[31,12,72],
+    [33,12,74],[35,12,76],[36,12,79],[38,12,81],[40,11,83],[41,11,85],[43,11,87],[45,11,89],
+    [47,10,91],[49,10,92],[50,10,94],[52,10,95],[54,9,97],[56,9,98],[57,9,99],[59,9,100],
+    [61,9,101],[62,9,102],[64,10,103],[66,10,104],[68,10,104],[69,10,105],[71,11,106],[73,11,106],
+    [74,12,107],[76,12,107],[77,13,108],[79,13,108],[81,14,108],[82,14,109],[84,15,109],[85,15,109],
+    [87,16,110],[89,16,110],[90,17,110],[92,18,110],[93,18,110],[95,19,110],[97,19,110],[98,20,110],
+    [100,21,110],[101,21,110],[103,22,110],[105,22,110],[106,23,110],[108,24,110],[109,24,110],[111,25,110],
+    [113,25,110],[114,26,110],[116,26,110],[117,27,110],[119,28,109],[120,28,109],[122,29,109],[124,29,109],
+    [125,30,109],[127,30,108],[128,31,108],[130,32,108],[132,32,107],[133,33,107],[135,33,107],[136,34,106],
+    [138,34,106],[140,35,105],[141,35,105],[143,36,105],[144,37,104],[146,37,104],[147,38,103],[149,38,103],
+    [151,39,102],[152,39,102],[154,40,101],[155,41,100],[157,41,100],[159,42,99],[160,42,99],[162,43,98],
+    [163,44,97],[165,44,96],[166,45,96],[168,46,95],[169,46,94],[171,47,94],[173,48,93],[174,48,92],
+    [176,49,91],[177,50,90],[179,50,90],[180,51,89],[182,52,88],[183,53,87],[185,53,86],[186,54,85],
+    [188,55,84],[189,56,83],[191,57,82],[192,58,81],[193,58,80],[195,59,79],[196,60,78],[198,61,77],
+    [199,62,76],[200,63,75],[202,64,74],[203,65,73],[204,66,72],[206,67,71],[207,68,70],[208,69,69],
+    [210,70,68],[211,71,67],[212,72,66],[213,74,65],[215,75,63],[216,76,62],[217,77,61],[218,78,60],
+    [219,80,59],[221,81,58],[222,82,56],[223,83,55],[224,85,54],[225,86,53],[226,87,52],[227,89,51],
+    [228,90,49],[229,92,48],[230,93,47],[231,94,46],[232,96,45],[233,97,43],[234,99,42],[235,100,41],
+    [235,102,40],[236,103,38],[237,105,37],[238,106,36],[239,108,35],[239,110,33],[240,111,32],[241,113,31],
+    [241,115,29],[242,116,28],[243,118,27],[243,120,25],[244,121,24],[245,123,23],[245,125,21],[246,126,20],
+    [246,128,19],[247,130,18],[247,132,16],[248,133,15],[248,135,14],[248,137,12],[249,139,11],[249,140,10],
+    [249,142,9],[250,144,8],[250,146,7],[250,148,7],[251,150,6],[251,151,6],[251,153,6],[251,155,6],
+    [251,157,7],[252,159,7],[252,161,8],[252,163,9],[252,165,10],[252,166,12],[252,168,13],[252,170,15],
+    [252,172,17],[252,174,18],[252,176,20],[252,178,22],[252,180,24],[251,182,26],[251,184,29],[251,186,31],
+    [251,188,33],[251,190,35],[250,192,38],[250,194,40],[250,196,42],[250,198,45],[249,199,47],[249,201,50],
+    [249,203,53],[248,205,55],[248,207,58],[247,209,61],[247,211,64],[246,213,67],[246,215,70],[245,217,73],
+    [245,219,76],[244,221,79],[244,223,83],[244,225,86],[243,227,90],[243,229,93],[242,230,97],[242,232,101],
+    [242,234,105],[241,236,109],[241,237,113],[241,239,117],[241,241,121],[242,242,125],[242,244,130],[243,245,134],
+    [243,246,138],[244,248,142],[245,249,146],[246,250,150],[248,251,154],[249,252,157],[250,253,161],[252,255,164]
+  ];
+  var COLOR_MAP = {
+    person:'#30ff30', car:'#30c8ff', truck:'#3096ff', bus:'#3096ff',
+    motorcycle:'#30b4ff', bicycle:'#30dcff', face:'#30ffc8'
+  };
+  var FACE_68_GROUPS = [
+    {name:'jaw',       idx:listRange(0,17),  color:'#a0a0a0'},
+    {name:'left_brow', idx:listRange(17,22), color:'#ffc800'},
+    {name:'right_brow',idx:listRange(22,27), color:'#ffc800'},
+    {name:'nose',      idx:listRange(27,36), color:'#00dc00'},
+    {name:'left_eye',  idx:listRange(36,42), color:'#6496ff'},
+    {name:'right_eye', idx:listRange(42,48), color:'#6496ff'},
+    {name:'mouth',     idx:listRange(48,68), color:'#5050ff'}
+  ];
+
+  function listRange(a,b){var r=[];for(var i=a;i<b;i++)r.push(i);return r;}
+
+  function drawOverlay() {
+    // In one-shot image mode the result JPEG is server-baked (overlay + stats
+    // already in the pixels). Suppress live-overlay repaints from SSE/pollStats
+    // so they don't draw the live-stream boxes/labels over the result image.
+    if (imageMode) return;
+    var cw = overlayCanvas.width;
+    var ch = overlayCanvas.height;
+    if (cw === 0 || ch === 0) return;
+    overlayCtx.clearRect(0, 0, cw, ch);
+    var d = latestSSEData;
+    if (!d) return;
+    var type = d.model_type || currentModelType;
+
+    if (d.objects && d.objects.length > 0) drawDetections(cw, ch, d.objects);
+    if (d.classifications && d.classifications.length > 0) drawClassifications(cw, ch, d.classifications);
+    if (d.landmarks && d.landmarks.length > 0) drawKeypoints(cw, ch, d.landmarks);
+    if (d.ocr_lines && d.ocr_lines.length > 0) drawOCR(cw, ch, d.ocr_lines);
+    // Segmentation/depth pixel overlays are rendered server-side into the MJPEG
+    // frame (DRAW_HANDLERS in main.py: _draw_segmentation / _draw_depth). Drawing
+    // them again here duplicated the layer. drawSegStats (the per-class
+    // pixel-percentage panel) is the ONLY seg overlay on this canvas — server bakes
+    // just the colour mask, never the text panel — so it must stay single-sourced here.
+    if (d.seg_class_map) { drawSegStats(cw, ch, d); }
+    drawStatsBar(cw, ch);
+  }
+
+  // HD overlay: same inference data as MJPEG, drawn on the <canvas> over the HD
+  // <video>. The draw* helpers are hard-wired to the global `overlayCtx`, so we
+  // briefly swap it onto the HD canvas and restore it after — reuses 100% of the
+  // box/label/keypoint/OCR rendering with zero duplication. Normalised bbox coords
+  // (0..1, relative to the 16:9 inference frame) scale straight to main's
+  // 1920x1080 because both share the sensor FoV. No seg mask (clean video + badge)
+  // and no stats bar here — those are the DOM #hd-badge / #hd-stats.
+  function drawHdOverlay() {
+    var cw = hdOverlayCanvas.width, ch = hdOverlayCanvas.height;
+    if (!cw || !ch) return;
+    hdOverlayCtx.clearRect(0, 0, cw, ch);
+    var d = latestSSEData;
+    if (!d) return;
+    if (!(d.objects && d.objects.length) && !(d.classifications && d.classifications.length) &&
+        !(d.landmarks && d.landmarks.length) && !(d.ocr_lines && d.ocr_lines.length)) return;
+    var prev = overlayCtx;
+    overlayCtx = hdOverlayCtx;
+    try {
+      if (d.objects && d.objects.length) drawDetections(cw, ch, d.objects);
+      if (d.classifications && d.classifications.length) drawClassifications(cw, ch, d.classifications);
+      if (d.landmarks && d.landmarks.length) drawKeypoints(cw, ch, d.landmarks);
+      if (d.ocr_lines && d.ocr_lines.length) drawOCR(cw, ch, d.ocr_lines);
+    } finally {
+      overlayCtx = prev;
+    }
+  }
+
+  function drawDetections(cw, ch, objects) {
+    objects.forEach(function(o) {
+      var color = COLOR_MAP[o.label] || '#30ff30';
+      var x1 = o.bbox.x * cw, y1 = o.bbox.y * ch;
+      var x2 = (o.bbox.x + o.bbox.w) * cw, y2 = (o.bbox.y + o.bbox.h) * ch;
+      overlayCtx.strokeStyle = color;
+      overlayCtx.lineWidth = 2;
+      overlayCtx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+      var label = o.label + ': ' + (o.score * 100).toFixed(0) + '%';
+      overlayCtx.font = '13px monospace';
+      var tw = overlayCtx.measureText(label).width;
+      var lh = 18;
+      var ly = Math.max(y1 - lh, 0);
+      overlayCtx.fillStyle = 'rgba(0,0,0,0.55)';
+      overlayCtx.fillRect(x1, ly, tw + 8, lh);
+      overlayCtx.fillStyle = color;
+      overlayCtx.fillText(label, x1 + 4, ly + 13);
+    });
+  }
+
+  function drawClassifications(cw, ch, classes) {
+    var barH = 24 * Math.min(classes.length, 5) + 8;
+    overlayCtx.fillStyle = 'rgba(0,0,0,0.6)';
+    overlayCtx.fillRect(0, 0, cw, barH);
+    var yOff = 18;
+    classes.slice(0, 5).forEach(function(c) {
+      var pct = c.score * 100;
+      var color = pct > 50 ? '#00ff00' : '#00c8ff';
+      overlayCtx.fillStyle = color;
+      overlayCtx.font = '12px monospace';
+      overlayCtx.fillText(c.label + ': ' + pct.toFixed(1) + '%', 10, yOff);
+      var barW = Math.min(pct / 100, 1) * 140;
+      overlayCtx.fillStyle = color;
+      overlayCtx.fillRect(10, yOff + 4, barW, 7);
+      overlayCtx.strokeStyle = '#666';
+      overlayCtx.lineWidth = 1;
+      overlayCtx.strokeRect(10, yOff + 4, 140, 7);
+      yOff += 24;
+    });
+  }
+
+  function drawKeypoints(cw, ch, landmarks) {
+    landmarks.forEach(function(ls) {
+      if (!ls.points || ls.points.length === 0) return;
+      var nPts = ls.points.length;
+      var pxPts = ls.points.map(function(p) { return {x: p.x * cw, y: p.y * ch}; });
+
+      if (nPts === 68) {
+        var xs = pxPts.map(function(p){return p.x;}), ys = pxPts.map(function(p){return p.y;});
+        var padX = Math.max(20, (Math.max.apply(null,xs)-Math.min.apply(null,xs))*0.25);
+        var padY = Math.max(20, (Math.max.apply(null,ys)-Math.min.apply(null,ys))*0.25);
+        var fx1=Math.min.apply(null,xs)-padX, fy1=Math.min.apply(null,ys)-padY;
+        var fx2=Math.max.apply(null,xs)+padX, fy2=Math.max.apply(null,ys)+padY;
+        overlayCtx.strokeStyle = '#00c800';
+        overlayCtx.lineWidth = 2;
+        overlayCtx.strokeRect(fx1, fy1, fx2-fx1, fy2-fy1);
+        overlayCtx.fillStyle = '#00c800';
+        overlayCtx.font = '11px monospace';
+        overlayCtx.fillText('face (' + nPts + ' pts)', fx1, fy1 - 4);
+
+        FACE_68_GROUPS.forEach(function(g) {
+          overlayCtx.strokeStyle = g.color;
+          overlayCtx.lineWidth = 1;
+          overlayCtx.beginPath();
+          g.idx.forEach(function(i, j) {
+            if (j === 0) overlayCtx.moveTo(pxPts[i].x, pxPts[i].y);
+            else overlayCtx.lineTo(pxPts[i].x, pxPts[i].y);
+          });
+          if (g.name === 'left_eye' || g.name === 'right_eye' || g.name === 'mouth') {
+            overlayCtx.lineTo(pxPts[g.idx[0]].x, pxPts[g.idx[0]].y);
+          }
+          overlayCtx.stroke();
+        });
+        pxPts.forEach(function(p) {
+          overlayCtx.fillStyle = '#ffffff';
+          overlayCtx.beginPath();
+          overlayCtx.arc(p.x, p.y, 2, 0, Math.PI * 2);
+          overlayCtx.fill();
+        });
+      } else if (nPts > 68) {
+        var dotGroups = [
+          {idx:[33,133,159,145,7,163,246,161,160,158,157,173,155,154,153,144], color:'#00ffff', r:3},
+          {idx:[263,362,386,374,249,390,466,388,387,385,384,398,382,381,380,373], color:'#00ffff', r:3},
+          {idx:[1,4,5,6,94,2,168,197,195,19], color:'#00ff00', r:3},
+          {idx:[61,291,0,17,78,308,13,14], color:'#0064ff', r:3},
+          {idx:[70,63,105,66,107,336,296,334,293,300], color:'#00c8ff', r:2}
+        ];
+        dotGroups.forEach(function(g) {
+          overlayCtx.fillStyle = g.color;
+          g.idx.forEach(function(i) {
+            if (i < nPts) {
+              overlayCtx.beginPath();
+              overlayCtx.arc(pxPts[i].x, pxPts[i].y, g.r, 0, Math.PI * 2);
+              overlayCtx.fill();
+            }
+          });
+        });
+      }
+    });
+  }
+
+  function drawOCR(cw, ch, lines) {
+    lines.forEach(function(l) {
+      var bx1 = l.bbox.x * cw, by1 = l.bbox.y * ch;
+      var bx2 = (l.bbox.x + l.bbox.w) * cw, by2 = (l.bbox.y + l.bbox.h) * ch;
+      overlayCtx.strokeStyle = '#00ffff';
+      overlayCtx.lineWidth = 2;
+      overlayCtx.strokeRect(bx1, by1, bx2 - bx1, by2 - by1);
+      var text = ' ' + l.text + ' ';
+      overlayCtx.font = '14px monospace';
+      var tw = overlayCtx.measureText(text).width;
+      var lh = 20;
+      var ly = Math.max(by1 - lh - 4, 0);
+      overlayCtx.fillStyle = 'rgba(0,0,0,0.65)';
+      overlayCtx.fillRect(bx1, ly, tw + 4, lh);
+      overlayCtx.fillStyle = '#00ffff';
+      overlayCtx.fillRect(bx1, ly, tw + 4, 2);
+      overlayCtx.fillText(text, bx1 + 2, ly + 14);
+    });
+  }
+
+  function drawStatsBar(cw, ch) {
+    var barH = 28;
+    var yStart = ch - barH;
+    overlayCtx.fillStyle = 'rgba(0,0,0,0.6)';
+    overlayCtx.fillRect(0, yStart, cw, barH);
+
+    var s = latestStatsData || {};
+    var parts = [];
+    // Model name
+    parts.push(currentModel);
+    // NPU hardware latency
+    if (s.hw_infer_time_ms !== undefined && s.hw_infer_time_ms > 0) {
+      parts.push('NPU: ' + s.hw_infer_time_ms.toFixed(1) + 'ms');
+    }
+    // NPU FPS from HAL
+    if (s.hw_fps !== undefined && s.hw_fps > 0) {
+      parts.push(s.hw_fps.toFixed(1) + 'fps');
+    }
+    // NPU utilization
+    if (s.device_utilization !== undefined && s.device_utilization > 0) {
+      parts.push('NPU: ' + s.device_utilization.toPrecision(2) + '%');
+    }
+    // Frame count
+    var frameNum = s.frame_count || s.infer_count || '--';
+    parts.push('#' + frameNum);
+
+    var text = parts.join('  │  ');
+    overlayCtx.fillStyle = '#00ffff';
+    overlayCtx.font = '11px monospace';
+    overlayCtx.fillText(text, 10, ch - 8);
+  }
+
+  function drawSegmentation(cw, ch, d) {
+    var seg = d.seg_class_map;
+    if (!seg) return;
+    var raw = atob(seg.data);
+    var buf = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
+    var sh = seg.h, sw = seg.w;
+
+    var imgData = overlayCtx.createImageData(cw, ch);
+    var pixels = imgData.data;
+    for (var y = 0; y < ch; y++) {
+      var sy = (y * sh / ch) | 0;
+      if (sy >= sh) sy = sh - 1;
+      for (var x = 0; x < cw; x++) {
+        var sx = (x * sw / cw) | 0;
+        if (sx >= sw) sx = sw - 1;
+        var cls = buf[sy * sw + sx];
+        if (cls === 0) continue; // background = transparent
+        var c = SEG_COLORS[(cls - 1) % SEG_COLORS.length];
+        var idx = (y * cw + x) << 2;
+        pixels[idx]   = c[0];
+        pixels[idx+1] = c[1];
+        pixels[idx+2] = c[2];
+        pixels[idx+3] = 140;
+      }
+    }
+    overlayCtx.putImageData(imgData, 0, 0);
+  }
+
+  function drawDepth(cw, ch, d) {
+    var dm = d.depth_map;
+    if (!dm) return;
+    var raw = atob(dm.data);
+    var buf = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
+    var dh = dm.h, dw = dm.w;
+
+    var imgData = overlayCtx.createImageData(cw, ch);
+    var pixels = imgData.data;
+    for (var y = 0; y < ch; y++) {
+      var sy = (y * dh / ch) | 0;
+      if (sy >= dh) sy = dh - 1;
+      for (var x = 0; x < cw; x++) {
+        var sx = (x * dw / cw) | 0;
+        if (sx >= dw) sx = dw - 1;
+        var rgb = INFERNO_LUT[buf[sy * dw + sx]];
+        var idx = (y * cw + x) << 2;
+        pixels[idx]   = rgb[0];
+        pixels[idx+1] = rgb[1];
+        pixels[idx+2] = rgb[2];
+        pixels[idx+3] = 100;
+      }
+    }
+    overlayCtx.putImageData(imgData, 0, 0);
+  }
+
+  function drawSegStats(cw, ch, d) {
+    var seg = d.seg_class_map;
+    if (!seg) return;
+    var raw = atob(seg.data);
+    var total = raw.length;
+    var counts = {};
+    for (var i = 0; i < total; i++) {
+      var cls = raw.charCodeAt(i);
+      if (cls > 0) counts[cls] = (counts[cls] || 0) + 1;
+    }
+    var keys = Object.keys(counts).map(Number).sort(function(a,b){return counts[b]-counts[a];});
+    if (keys.length === 0) return;
+    var lineH = 20;
+    var boxW = 160;
+    var boxH = lineH * keys.length + 10;
+    var lx = cw - boxW - 10;
+    var ly = ch - boxH - 42;
+    overlayCtx.fillStyle = 'rgba(0,0,0,0.6)';
+    overlayCtx.fillRect(lx, ly, boxW, boxH);
+    overlayCtx.font = '11px monospace';
+    var yy = ly + 16;
+    for (var k = 0; k < keys.length; k++) {
+      var clsId = keys[k];
+      var pct = (counts[clsId] / total * 100).toFixed(1);
+      var c = SEG_COLORS[(clsId - 1) % SEG_COLORS.length];
+      overlayCtx.fillStyle = 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')';
+      overlayCtx.fillRect(lx + 6, yy - 9, 10, 10);
+      overlayCtx.fillStyle = '#dcdcdc';
+      overlayCtx.fillText('cls ' + clsId + ': ' + pct + '%', lx + 22, yy);
+      yy += lineH;
+    }
+  }
+
+  function startMjpegStream() {
+    streamImg.onload = function() {
+      var w = streamImg.naturalWidth || 1920;
+      var h = streamImg.naturalHeight || 1080;
+      if (overlayCanvas.width !== w || overlayCanvas.height !== h) {
+        overlayCanvas.width = w;
+        overlayCanvas.height = h;
+      }
+      drawOverlay();
+      onFirstFrame();
+    };
+    streamImg.onerror = function() {
+      loading.classList.remove('hidden');
+      var span = loading.querySelector('span:not(.switching-label):not(.spinner)');
+      if (span) span.textContent = 'Reconnecting...';
+    };
+    streamImg.src = '/stream';
+  }
+
+  function startDemoResources(modelId) {
+    if (currentModel !== modelId) {
+      switchModelOnServer(modelId);
+    } else {
+      startMjpegStream();
+      connectSSE();
+      pollStats();
+      pollLensStatus();
+    }
+  }
+
+  var loadingSteps = [
+    {t: 0,    text: 'Unloading previous model...', pct: 10},
+    {t: 800,  text: 'Loading model to NPU...',       pct: 30},
+    {t: 2500, text: 'Compiling inference graph...',   pct: 55},
+    {t: 5000, text: 'Starting inference pipeline...', pct: 80},
+  ];
+  var loadingTimers = [];
+
+  function showModelLoading(modelName) {
+    modelLoadingName.textContent = modelName;
+    modelLoadingStep.textContent = 'Preparing...';
+    modelLoadingBarFill.style.width = '5%';
+    modelLoadingOverlay.classList.add('active');
+    loadingTimers.forEach(function(t) { clearTimeout(t); });
+    loadingTimers = loadingSteps.map(function(s) {
+      return setTimeout(function() {
+        modelLoadingStep.textContent = s.text;
+        modelLoadingBarFill.style.width = s.pct + '%';
+      }, s.t);
+    });
+  }
+
+  function hideModelLoading() {
+    loadingTimers.forEach(function(t) { clearTimeout(t); });
+    loadingTimers = [];
+    modelLoadingBarFill.style.width = '100%';
+    modelLoadingStep.textContent = 'Ready';
+    setTimeout(function() { modelLoadingOverlay.classList.remove('active'); }, 300);
+  }
+
+  function switchModelOnServer(modelId) {
+    var modelInfo = modelsData.find(function(m) { return m.id === modelId; });
+    var displayName = modelInfo ? modelInfo.name : modelId;
+
+    // Show loading overlay + stop old stream
+    showModelLoading(displayName);
+    streamImg.src = '';
+    overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+    if (eventSource) { eventSource.close(); eventSource = null; }
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    if (statsTimer) { clearTimeout(statsTimer); statsTimer = null; }
+
+    fetch('/api/model', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({model_id: modelId})
+    })
+    .then(function(r) {
+      if (!r.ok) return r.json().then(function(d) { throw new Error(d.error || 'Failed'); });
+      return r.json();
+    })
+    .then(function(data) {
+      currentModel = data.current || modelId;
+      currentModelType = data.model_type || 'detection';
+      statModel.textContent = displayName;
+      switcherCurrent.textContent = displayName;
+      switcherCurrent.textContent = displayName;
+      updateSwitcherActive();
+      updateClipVisibility();
+      updatePanelTitle();
+      updatePipelineStats(isPipeline(currentModelType));
+      resultList.innerHTML = '<span style="color:var(--text-muted)">Waiting for inference...</span>';
+      if (currentModelType === 'clip') loadClipLabels();
+
+      // Show pre-computed NPU benchmark FPS immediately (no 5s wait)
+      var npuFpsSub = document.getElementById('npu-fps-sub');
+      statNpuFps.textContent = '--';
+      statNpuFps.className = 'stat-value';
+      statHwInfer.textContent = '--';
+      statHwInfer.className = 'stat-value';
+      npuFpsCard.style.display = '';
+      if (npuFpsSub) npuFpsSub.textContent = '';
+
+      // Connect stream + SSE, then hide loading on first frame
+      loading.classList.remove('hidden');
+      startMjpegStream();
+      connectSSE();
+      pollStats();
+      pollLensStatus();
+    })
+    .catch(function(err) {
+      hideModelLoading();
+      loading.classList.add('hidden');
+      showToast('Switch failed: ' + err.message, 'error');
+    });
+  }
+
+  // ── Landing model grid ──
+
+  function renderModelGrid(models) {
+    modelGrid.innerHTML = '';
+    models.forEach(function(m, i) {
+      var entry = document.createElement('div');
+      entry.className = 'model-entry anim-card-enter';
+      entry.style.animationDelay = (i * 50) + 'ms';
+      entry.setAttribute('data-model', m.id);
+
+      var icon = TYPE_ICONS[m.type] || TYPE_ICONS.detection;
+      var badges = badgeHtml(m.type);
+      if (isPipeline(m.type)) badges += ' <span class="badge badge-pipe">2-Stage</span>';
+
+      // NPU benchmark FPS badge
+      var benchHtml = '';
+      var bfps = m.npu_benchmark_fps;
+      if (bfps !== undefined && bfps > 0) {
+        var cls = bfps >= 25 ? 'bench-good' : bfps >= 10 ? 'bench-warn' : 'bench-bad';
+        benchHtml =
+          '<div class="model-entry-benchmark ' + cls + '">' +
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>' +
+            'NPU <span class="bench-value">' + bfps.toFixed(0) + '</span> fps' +
+          '</div>';
+      }
+
+      entry.innerHTML =
+        '<div class="model-entry-icon">' + icon + '</div>' +
+        '<div class="model-entry-name">' + esc(m.name) + '</div>' +
+        '<div class="model-entry-desc">' + esc(m.description || '') + '</div>' +
+        '<div class="model-entry-badges">' + badges + '</div>' +
+        benchHtml +
+        '<div class="model-entry-cta">Try it <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></div>';
+
+      entry.addEventListener('click', function() {
+        if (m.type === 'genai') {
+          window.location.href = '/chat?model=' + encodeURIComponent(m.id);
+          return;
+        }
+        showDemo(m.id);
+      });
+
+      modelGrid.appendChild(entry);
+    });
+  }
+
+  function updateClipVisibility() {
+    clipPanel.classList.toggle('visible', currentModelType === 'clip');
+    document.getElementById('gallery-section').classList.toggle('visible', currentModelType === 'clip');
+  }
+
+  // ── Stream model switcher dropdown ──
+
+  function renderSwitcherDropdown(models) {
+    switcherDropdown.innerHTML = '';
+    models.forEach(function(m) {
+      if (m.type === 'genai') return;
+      var item = document.createElement('button');
+      item.className = 'switcher-item';
+      item.setAttribute('data-model', m.id);
+      var badges = badgeHtml(m.type);
+      if (isPipeline(m.type)) badges += ' <span class="badge badge-pipe">2</span>';
+      // Show NPU FPS in switcher if available
+      var fpsTag = '';
+      var bfps = m.npu_benchmark_fps;
+      if (bfps !== undefined && bfps > 0) {
+        fpsTag = '<span class="switcher-item-fps">' + bfps.toFixed(0) + ' fps</span>';
+      }
+      item.innerHTML =
+        '<span class="switcher-item-name">' + esc(m.name) + '</span>' +
+        '<span class="switcher-item-badges">' + badges + '</span>' +
+        fpsTag;
+      item.addEventListener('click', function() {
+        var mid = this.getAttribute('data-model');
+        closeSwitcher();
+        if (mid === currentModel) return;
+        window.location.hash = 'model=' + mid;
+        switchModelOnServer(mid);
+      });
+      switcherDropdown.appendChild(item);
+    });
+  }
+
+  function updateSwitcherActive() {
+    switcherDropdown.querySelectorAll('.switcher-item').forEach(function(item) {
+      item.classList.toggle('active', item.getAttribute('data-model') === currentModel);
+    });
+  }
+
+  function closeSwitcher() {
+    switcherDropdown.classList.remove('open');
+  }
+
+  switcherTrigger.addEventListener('click', function(e) {
+    e.stopPropagation();
+    switcherDropdown.classList.toggle('open');
+  });
+
+  document.addEventListener('click', function(e) {
+    if (!switcherDropdown.contains(e.target) && e.target !== switcherTrigger) {
+      closeSwitcher();
+    }
+  });
+
+  function updatePanelTitle() {
+    panelTitle.textContent = PANEL_TITLES[currentModelType] || 'Live Results';
+  }
+
+  function updatePipelineStats(show) {
+    if (pipelineInfo) pipelineInfo.style.display = show ? '' : 'none';
+  }
+
+  // ── Load models ──
+
+  function loadModels() {
+    fetch('/api/models')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        modelsData = data.models || [];
+        renderModelGrid(modelsData);
+        renderSwitcherDropdown(modelsData);
+      })
+      .catch(function() { showToast('Failed to load models', 'error'); });
+  }
+
+  // ── CLIP ──
+
+  function loadClipLabels() {
+    fetch('/api/clip/labels')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.labels) clipInput.value = data.labels.join(', ');
+      });
+  }
+
+  clipApply.addEventListener('click', function() {
+    var text = clipInput.value.trim();
+    if (!text) return;
+    var labels = text.split(',').map(function(s) { return s.trim(); }).filter(Boolean).slice(0, 20);
+    fetch('/api/clip/labels', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({labels: labels})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.labels) clipInput.value = data.labels.join(', ');
+      if (data.error) showToast(data.error, 'error');
+      else showToast('Labels updated', 'success');
+    })
+    .catch(function() { showToast('Labels update failed', 'error'); });
+  });
+
+  // ── Results rendering ──
+
+  var resultDebounce = null;
+  var lastResultKey = '';
+  var lastResultTime = 0;
+
+  function inferColor(score) {
+    if (score > 0.7) return '#6bc8a0';
+    if (score > 0.4) return '#c8b068';
+    return '#8a8a99';
+  }
+
+  function renderResults(d) {
+    // Debounce: skip update if last render was < 250ms ago
+    var now = Date.now();
+    var key = JSON.stringify(d);
+    if (now - lastResultTime < 250 && key === lastResultKey) return;
+    lastResultTime = now;
+    lastResultKey = key;
+
+    if (resultDebounce) clearTimeout(resultDebounce);
+    resultDebounce = setTimeout(function() { doRenderResults(d); }, 80);
+  }
+
+  function doRenderResults(d) {
+    var type = d.model_type || currentModelType;
+    var html = '';
+
+    if (d.pipeline) {
+      updatePipelineStats(true);
+      statS1.textContent = d.pipeline.stage1_ms;
+      statS2.textContent = d.pipeline.stage2_ms;
+    }
+
+    if (d.ocr_lines && d.ocr_lines.length > 0) {
+      html = d.ocr_lines.map(function(l) {
+        return '<div class="det-item">' +
+          '<span class="det-label ocr-text">' + esc(l.text || '?') + '</span>' +
+          '<span class="det-score" style="color:' + inferColor(l.confidence) + '">' +
+          (l.confidence * 100).toFixed(1) + '%</span></div>';
+      }).join('');
+      stableUpdate(resultList, html);
+      return;
+    }
+
+    if (d.objects && d.objects.length > 0) {
+      html = d.objects.map(function(o) {
+        var barW = Math.round(Math.min(o.score, 1) * 50);
+        return '<div class="det-item">' +
+          '<span class="det-label">' + esc(o.label) + '</span>' +
+          '<span><span class="conf-bar" style="width:' + barW + 'px;background:' + inferColor(o.score) + '"></span> ' +
+          '<span class="det-score">' + (o.score * 100).toFixed(1) + '%</span></span></div>';
+      }).join('');
+      stableUpdate(resultList, html);
+      return;
+    }
+
+    if (d.classifications && d.classifications.length > 0) {
+      html = d.classifications.map(function(c) {
+        var barW = Math.round(Math.min(c.score, 1) * 60);
+        return '<div class="det-item">' +
+          '<span class="det-label">' + esc(c.label) + '</span>' +
+          '<span><span class="conf-bar" style="width:' + barW + 'px;background:#5bb8b0"></span> ' +
+          '<span class="det-score">' + (c.score * 100).toFixed(1) + '%</span></span></div>';
+      }).join('');
+      stableUpdate(resultList, html);
+      return;
+    }
+
+    if (d.landmarks && d.landmarks.length > 0) {
+      html = d.landmarks.map(function(ls) {
+        var nPts = ls.point_count || (ls.points ? ls.points.length : 0);
+        return '<div class="det-item">' +
+          '<span class="det-label">Face ' + '</span>' +
+          '<span class="det-score">' + nPts + ' points</span></div>';
+      }).join('');
+      stableUpdate(resultList, html);
+      return;
+    }
+
+    if (d.masks && d.masks.length > 0) {
+      html = d.masks.map(function(m) {
+        var label = m.label || ('class_' + m.class_id);
+        return '<div class="det-item">' +
+          '<span class="det-label">' + esc(label) + '</span>' +
+          '<span class="det-score" style="color:' + inferColor(m.confidence) + '">' +
+          (m.confidence * 100).toFixed(1) + '%</span></div>';
+      }).join('');
+      stableUpdate(resultList, html);
+      return;
+    }
+
+    if (d.embedding_dim) {
+      html =
+        '<div class="det-item"><span class="det-label">Dimension</span><span class="det-score">' +
+        d.embedding_dim + '</span></div>' +
+        '<div class="det-item"><span class="det-label">Vectors</span><span class="det-score">' +
+        (d.embedding_count || 0) + '</span></div>';
+      stableUpdate(resultList, html);
+      return;
+    }
+
+    if (d.objects && d.objects.length === 0 && !d.ocr_lines) {
+      var msg = isPipeline(type) ? 'No targets detected' : 'No detections';
+      resultList.innerHTML = '<span style="color:var(--text-muted)">' + msg + '</span>';
+    }
+  }
+
+  // Stable update: only replace if content actually changed
+  function stableUpdate(el, newHtml) {
+    if (el.innerHTML === newHtml) return;
+    el.innerHTML = newHtml;
+  }
+
+  // ── SSE ──
+
+  function connectSSE() {
+    if (eventSource) eventSource.close();
+    eventSource = new EventSource('/api/events');
+    eventSource.onmessage = function(e) {
+      try {
+        var d = JSON.parse(e.data);
+        latestSSEData = d;
+        renderResults(d);
+        drawOverlay();
+        drawHdOverlay();
+        loading.classList.add('hidden');
+        switchLabel.style.display = 'none';
+      } catch(err) {
+        console.error('[overlay] render error:', err);
+      }
+    };
+    eventSource.onerror = function() {
+      eventSource.close();
+      eventSource = null;
+      if (!demoActive) return;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(function() { if (demoActive) connectSSE(); }, 3000);
+    };
+  }
+
+  // ── Stats polling ──
+
+  function pollStats() {
+    if (!demoActive) return;
+    fetch('/api/stats')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        latestStatsData = data;
+        if (currentOutputMode === 'hd') updateHdStats();
+        // NPU hardware latency (pure hardware, not end-to-end)
+        if (data.hw_infer_time_ms !== undefined && data.hw_infer_time_ms > 0) {
+          statHwInfer.textContent = data.hw_infer_time_ms;
+          var cls = data.hw_infer_time_ms < 10 ? 'good' : data.hw_infer_time_ms < 30 ? 'warn' : 'bad';
+          statHwInfer.className = 'stat-value ' + cls;
+        }
+        if (data.frame_count) statFrame.textContent = data.frame_count;
+        var npuText = '--';
+        if (data.device_utilization !== undefined) {
+          npuText = data.device_utilization + '%';
+          npuBarFill.style.width = data.device_utilization + '%';
+          if (data.device_temperature) npuText += ' ' + data.device_temperature + '°C';
+        }
+        statNpu.textContent = npuText;
+        // NPU FPS from HAL hardware latency measurement
+        var npuFpsSub = document.getElementById('npu-fps-sub');
+        if (data.hw_fps !== undefined && data.hw_fps > 0) {
+          statNpuFps.textContent = data.hw_fps;
+          var fpsCls = data.hw_fps >= 25 ? 'good' : data.hw_fps >= 10 ? 'warn' : 'bad';
+          statNpuFps.className = 'stat-value ' + fpsCls;
+          npuFpsCard.style.display = '';
+          if (npuFpsSub) npuFpsSub.textContent = 'Hardware throughput ' + data.hw_fps.toFixed(1) + ' fps';
+        } else {
+          statNpuFps.textContent = '--';
+          statNpuFps.className = 'stat-value';
+          npuFpsCard.style.display = '';
+          if (npuFpsSub) npuFpsSub.textContent = '';
+        }
+        // ── System resource metrics ──
+        var latencySub = document.getElementById("latency-sub");
+        if (latencySub && data.queue_time_ms !== undefined && data.hw_infer_time_ms !== undefined) {
+          var totalMs = data.infer_time_ms || 0;
+          var hwMs = data.hw_infer_time_ms || 0;
+          var qMs = data.queue_time_ms || 0;
+          var prePostMs = Math.max(0, totalMs - hwMs - qMs);
+          latencySub.textContent = "HW " + hwMs + " + Queue " + qMs.toFixed(1) + " + Pre/Post " + prePostMs.toFixed(1) + " ms";
+        }
+        var statCpu = document.getElementById("stat-cpu");
+        if (statCpu) {
+          if (data.cpu_utilization !== undefined && data.cpu_utilization >= 0) {
+            statCpu.textContent = data.cpu_utilization.toFixed(0) + "%";
+          } else { statCpu.textContent = "--"; }
+        }
+        var statDsp = document.getElementById("stat-dsp");
+        if (statDsp) {
+          if (data.dsp_utilization !== undefined && data.dsp_utilization >= 0) {
+            statDsp.textContent = data.dsp_utilization.toFixed(0) + "%";
+          } else { statDsp.textContent = "--"; }
+        }
+        var statNpuMem = document.getElementById("stat-npu-mem");
+        var npuMemBar = document.getElementById("npu-mem-bar-fill");
+        if (statNpuMem && data.npu_memory_used_mb !== undefined) {
+          var npuMemTotal = data.npu_memory_total_mb || 1;
+          var npuMemPct = Math.round(data.npu_memory_used_mb / npuMemTotal * 100);
+          statNpuMem.textContent = data.npu_memory_used_mb + "/" + npuMemTotal + " MB";
+          if (npuMemBar) npuMemBar.style.width = npuMemPct + "%";
+        }
+        var statRam = document.getElementById("stat-ram");
+        if (statRam && data.ram_used_mb !== undefined) {
+          statRam.textContent = data.ram_used_mb + "/" + data.ram_total_mb + " MB";
+        }
+        var statQueue = document.getElementById("stat-queue");
+        if (statQueue) {
+          if (data.queue_time_ms !== undefined) {
+            statQueue.textContent = data.queue_depth + " (" + data.queue_time_ms.toFixed(1) + "ms)";
+          } else { statQueue.textContent = data.queue_depth !== undefined ? data.queue_depth : "--"; }
+        }
+        var statErrors = document.getElementById("stat-errors");
+        if (statErrors) {
+          if (data.total_errors !== undefined) {
+            statErrors.textContent = data.total_errors;
+            statErrors.style.color = data.total_errors > 0 ? "#ef6461" : "";
+          } else { statErrors.textContent = "--"; }
+        }
+        drawOverlay();
+      })
+      .catch(function() {})
+      .finally(function() { if (demoActive) statsTimer = setTimeout(pollStats, 3000); });
+  }
+
+  // ── Health check ──
+
+  function checkHealth() {
+    fetch('/api/health')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var dot = demoActive ? healthDot : healthDotLanding;
+        if (!dot) return;
+        dot.style.display = 'block';
+        if (data.status === 'ok') {
+          dot.style.background = '#6bc8a0';
+          dot.style.boxShadow = '0 0 8px rgba(107,200,160,0.5)';
+          dot.style.animation = 'pulse-dot 2.5s ease-in-out infinite';
+          if (healthBadge) {
+            healthBadge.style.display = demoActive ? 'inline-block' : 'none';
+            healthBadge.textContent = 'OK';
+            healthBadge.className = 'health-badge';
+          }
+        } else {
+          dot.style.background = '#c86868';
+          dot.style.boxShadow = 'none';
+          dot.style.animation = 'none';
+          if (healthBadge) {
+            healthBadge.style.display = demoActive ? 'inline-block' : 'none';
+            healthBadge.textContent = data.reason ? 'DEGRADED' : 'DEGRADED';
+            healthBadge.className = 'health-badge degraded';
+          }
+        }
+      })
+      .catch(function() {
+        var dot = demoActive ? healthDot : healthDotLanding;
+        if (dot) { dot.style.background = '#555'; dot.style.animation = 'none'; }
+        if (healthBadge) { healthBadge.textContent = 'OFFLINE'; healthBadge.className = 'health-badge degraded'; }
+      })
+      .finally(function() { healthTimer = setTimeout(checkHealth, 10000); });
+  }
+
+  // ── Back button ──
+
+  backBtn.addEventListener('click', function(e) {
+    e.preventDefault();
+    showLanding();
+  });
+
+  // Keyboard shortcut
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && demoActive) showLanding();
+  });
+
+  // ── Hash routing ──
+
+  function handleHash() {
+    if (_suppressHashChange) { _suppressHashChange = false; return; }
+    var hash = window.location.hash;
+    if (hash.startsWith('#model=')) {
+      var modelId = hash.slice(7);
+      if (!demoActive || currentModel !== modelId) {
+        showDemo(modelId);
+      }
+    } else {
+      if (demoActive) showLanding();
+    }
+  }
+
+  window.addEventListener('hashchange', handleHash);
+
+  // ── Gallery / Search ──
+
+  var searchInput = document.getElementById('search-input');
+  var searchBtn = document.getElementById('search-btn');
+  var searchResults = document.getElementById('search-results');
+  var galleryGrid = document.getElementById('gallery-grid');
+  var captureToggle = document.getElementById('capture-toggle');
+  var galleryStatsText = document.getElementById('gallery-stats-text');
+  var galleryRefresh = document.getElementById('gallery-refresh');
+  var galleryClear = document.getElementById('gallery-clear');
+  var tabSearch = document.getElementById('tab-search');
+  var tabBrowse = document.getElementById('tab-browse');
+  var panelSearch = document.getElementById('panel-search');
+  var panelBrowse = document.getElementById('panel-browse');
+  var imageModal = document.getElementById('image-modal');
+  var modalImg = document.getElementById('modal-img');
+  var modalMeta = document.getElementById('modal-meta');
+  var modalClose = document.getElementById('modal-close');
+  var captureEnabled = false;
+
+  function switchTab(tab) {
+    tabSearch.classList.toggle('active', tab === 'search');
+    tabBrowse.classList.toggle('active', tab === 'browse');
+    panelSearch.style.display = tab === 'search' ? '' : 'none';
+    panelBrowse.style.display = tab === 'browse' ? '' : 'none';
+    if (tab === 'browse') loadGallery();
+  }
+  tabSearch.addEventListener('click', function() { switchTab('search'); });
+  tabBrowse.addEventListener('click', function() { switchTab('browse'); });
+
+  function openModal(src, meta) {
+    modalImg.src = src;
+    modalMeta.textContent = meta || '';
+    imageModal.classList.add('open');
+  }
+  modalClose.addEventListener('click', function() { imageModal.classList.remove('open'); });
+  imageModal.addEventListener('click', function(e) {
+    if (e.target === imageModal) imageModal.classList.remove('open');
+  });
+
+  function scoreColor(s) {
+    if (s > 0.3) return '#6bc8a0';
+    if (s > 0.2) return '#5bb8b0';
+    return '#8a8a99';
+  }
+
+  function formatTime(ts) {
+    if (!ts) return '';
+    return new Date(ts).toLocaleTimeString();
+  }
+
+  function doSearch() {
+    var q = searchInput.value.trim();
+    if (!q) { showToast('Enter a search query', 'info'); return; }
+    searchResults.innerHTML = '<div class="search-loading">Searching...</div>';
+    fetch('/api/search', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({query: q, top_k: 20})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.error) { searchResults.innerHTML = '<div class="search-empty">' + esc(data.error) + '</div>'; return; }
+      if (!data.results || data.results.length === 0) {
+        searchResults.innerHTML = '<div class="search-empty">No matching images found</div>';
+        return;
+      }
+      searchResults.innerHTML = data.results.map(function(r) {
+        return '<div class="search-card" data-id="' + r.id + '">' +
+          '<img src="/api/gallery/' + r.id + '/image" loading="lazy" alt="Result" />' +
+          '<div class="search-card-info">' +
+          '<span class="search-card-score" style="color:' + scoreColor(r.score) + '">' +
+          (r.score * 100).toFixed(1) + '%</span>' +
+          '<span class="search-card-time">' + formatTime(r.timestamp) + '</span>' +
+          '</div></div>';
+      }).join('');
+      searchResults.querySelectorAll('.search-card').forEach(function(card) {
+        card.addEventListener('click', function() {
+          openModal('/api/gallery/' + this.getAttribute('data-id') + '/image', 'ID: ' + this.getAttribute('data-id'));
+        });
+      });
+    })
+    .catch(function() { searchResults.innerHTML = '<div class="search-empty">Search failed</div>'; });
+  }
+
+  searchBtn.addEventListener('click', doSearch);
+  searchInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') doSearch(); });
+
+  function loadGallery() {
+    fetch('/api/gallery?page=1&page_size=60')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        updateGalleryStats();
+        if (!data.items || data.items.length === 0) {
+          galleryGrid.innerHTML = '<div class="search-empty">Gallery is empty</div>';
+          return;
+        }
+        galleryGrid.innerHTML = data.items.map(function(r) {
+          return '<div class="search-card" data-id="' + r.id + '">' +
+            '<img src="/api/gallery/' + r.id + '/image" loading="lazy" alt="Image" />' +
+            '<div class="search-card-info">' +
+            '<span class="search-card-score">#' + r.id + '</span>' +
+            '<span class="search-card-time">' + formatTime(r.timestamp) + '</span>' +
+            '</div></div>';
+        }).join('');
+        galleryGrid.querySelectorAll('.search-card').forEach(function(card) {
+          card.addEventListener('click', function() {
+            openModal('/api/gallery/' + this.getAttribute('data-id') + '/image', 'Image #' + this.getAttribute('data-id'));
+          });
+        });
+      })
+      .catch(function() { galleryGrid.innerHTML = '<div class="search-empty">Failed to load gallery</div>'; });
+  }
+
+  function updateGalleryStats() {
+    fetch('/api/gallery/stats')
+      .then(function(r) { return r.json(); })
+      .then(function(data) { galleryStatsText.textContent = data.count + ' images, ' + data.disk_mb + ' MB'; });
+  }
+
+  captureToggle.addEventListener('click', function() {
+    captureEnabled = !captureEnabled;
+    captureToggle.classList.toggle('active', captureEnabled);
+    fetch('/api/gallery/capture', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({enabled: captureEnabled, interval: 5})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      showToast('Capture ' + (data.enabled ? 'enabled' : 'disabled'), 'success');
+      updateGalleryStats();
+    });
+  });
+
+  galleryRefresh.addEventListener('click', function() { loadGallery(); });
+  galleryClear.addEventListener('click', function() {
+    if (!confirm('Delete all gallery images?')) return;
+    fetch('/api/gallery?older_than_seconds=999999999', {method: 'DELETE'})
+      .then(function(r) { return r.json(); })
+      .then(function(data) { showToast('Removed ' + data.removed + ' images', 'success'); loadGallery(); });
+  });
+
+  // ── Lens control ──
+
+  var lensPanel = document.getElementById('lens-panel');
+  var lensToggleBtn = document.getElementById('lens-toggle-btn');
+  var lensBody = document.getElementById('lens-body');
+  var lensZoomRange = document.getElementById('lens-zoom-range');
+  var lensFocusRange = document.getElementById('lens-focus-range');
+  var lensZoomBadge = document.getElementById('lens-zoom-badge');
+  var lensFocusBadge = document.getElementById('lens-focus-badge');
+  var lensAfBtn = document.getElementById('lens-af-btn');
+  var lensTimer = null;
+
+  // Lens state from poll
+  var lensZoomPos = 0, lensFocusPos = 0;
+  var lensZoomMin = -3236, lensZoomMax = 760;
+  var lensFocusMin = -844, lensFocusMax = 592;
+
+  function lensClamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
+  function lensClamp01(v) { return lensClamp(v, 0, 1); }
+
+  var ZOOM_RATIO_MIN = 1.0, ZOOM_RATIO_MAX = 2.88;
+
+  function updateLensUI() {
+    var zRange = Math.max(lensZoomMax - lensZoomMin, 1);
+    var fRange = Math.max(lensFocusMax - lensFocusMin, 1);
+    var zPct = Math.round(((lensZoomPos - lensZoomMin) / zRange) * 100);
+    var fPct = Math.round(((lensFocusPos - lensFocusMin) / fRange) * 100);
+    zPct = lensClamp(zPct, 0, 100);
+    fPct = lensClamp(fPct, 0, 100);
+
+    if (document.activeElement !== lensZoomRange) lensZoomRange.value = zPct;
+    if (document.activeElement !== lensFocusRange) lensFocusRange.value = fPct;
+
+    var zLevel = lensClamp01((lensZoomPos - lensZoomMin) / zRange);
+    var zoomRatio = ZOOM_RATIO_MIN + (ZOOM_RATIO_MAX - ZOOM_RATIO_MIN) * zLevel;
+    lensZoomBadge.textContent = zoomRatio.toFixed(1) + 'x';
+
+    var fLevel = lensClamp01((lensFocusPos - lensFocusMin) / fRange);
+    lensFocusBadge.textContent = Math.round(fLevel * 100) + '%';
+  }
+
+  lensToggleBtn.addEventListener('click', function() {
+    lensPanel.classList.toggle('open');
+  });
+
+  // Slider commit: send absolute level on change
+  lensZoomRange.addEventListener('change', function() {
+    var pct = parseInt(this.value);
+    fetch('/api/lens/zoom', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({level: pct / 100})
+    }).catch(function() { showToast('Zoom failed', 'error'); });
+  });
+
+  lensFocusRange.addEventListener('change', function() {
+    var pct = parseInt(this.value);
+    fetch('/api/lens/focus', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({level: pct / 100})
+    }).catch(function() { showToast('Focus failed', 'error'); });
+  });
+
+  // Update badge while dragging (visual only)
+  lensZoomRange.addEventListener('input', function() {
+    var pct = parseInt(this.value);
+    var ratio = ZOOM_RATIO_MIN + (ZOOM_RATIO_MAX - ZOOM_RATIO_MIN) * (pct / 100);
+    lensZoomBadge.textContent = ratio.toFixed(1) + 'x';
+  });
+  lensFocusRange.addEventListener('input', function() {
+    lensFocusBadge.textContent = parseInt(this.value) + '%';
+  });
+
+  // +/- step buttons: nudge by 2% of range (matching web console)
+  function lensStep(axis, dir) {
+    var pos, minPos, maxPos, range, rangeEl, badgeEl;
+    if (axis === 'zoom') {
+      pos = lensZoomPos; minPos = lensZoomMin; maxPos = lensZoomMax;
+      range = Math.max(maxPos - minPos, 1);
+      rangeEl = lensZoomRange; badgeEl = lensZoomBadge;
+    } else {
+      pos = lensFocusPos; minPos = lensFocusMin; maxPos = lensFocusMax;
+      range = Math.max(maxPos - minPos, 1);
+      rangeEl = lensFocusRange; badgeEl = lensFocusBadge;
+    }
+    var step = Math.max(1, Math.round(range * 0.02));
+    var nextPos = lensClamp(pos + dir * step, minPos, maxPos);
+    var nextLevel = lensClamp01((nextPos - minPos) / range);
+    var nextPct = Math.round(nextLevel * 100);
+    rangeEl.value = nextPct;
+
+    if (axis === 'zoom') {
+      var ratio = ZOOM_RATIO_MIN + (ZOOM_RATIO_MAX - ZOOM_RATIO_MIN) * nextLevel;
+      badgeEl.textContent = ratio.toFixed(1) + 'x';
+    } else {
+      badgeEl.textContent = nextPct + '%';
+    }
+
+    fetch('/api/lens/' + axis, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({level: nextLevel})
+    }).catch(function() { showToast(axis.charAt(0).toUpperCase() + axis.slice(1) + ' failed', 'error'); });
+  }
+
+  document.getElementById('lens-zoom-minus').addEventListener('click', function() { lensStep('zoom', -1); });
+  document.getElementById('lens-zoom-plus').addEventListener('click', function() { lensStep('zoom', 1); });
+  document.getElementById('lens-focus-minus').addEventListener('click', function() { lensStep('focus', -1); });
+  document.getElementById('lens-focus-plus').addEventListener('click', function() { lensStep('focus', 1); });
+
+  lensAfBtn.addEventListener('click', function() {
+    lensAfBtn.classList.add('loading');
+    fetch('/api/lens/oneshot-af', {method: 'POST'})
+      .then(function(r) { return r.json(); })
+      .then(function(d) { if (d.error) showToast(d.error, 'error'); })
+      .catch(function() { showToast('Autofocus failed', 'error'); })
+      .finally(function() { lensAfBtn.classList.remove('loading'); });
+  });
+
+  function pollLensStatus() {
+    if (!demoActive) return;
+    fetch('/api/lens/status')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.error) return;
+        var zl = d.zoom_limit || {};
+        var fl = d.focus_limit || {};
+        lensZoomMin = zl.min_pos || 0; lensZoomMax = zl.max_pos || 1;
+        lensFocusMin = fl.min_pos || 0; lensFocusMax = fl.max_pos || 1;
+        lensZoomPos = d.zoom_pos || 0;
+        lensFocusPos = d.focus_pos || 0;
+        updateLensUI();
+      })
+      .catch(function() {})
+      .finally(function() { if (demoActive) lensTimer = setTimeout(pollLensStatus, 2000); });
+  }
+
+  function stopLensPoll() {
+    if (lensTimer) { clearTimeout(lensTimer); lensTimer = null; }
+  }
+
+  // ── Video source ──
+
+  var sourceToggle = document.getElementById('source-toggle');
+  var sourceCamera = document.getElementById('source-camera');
+  var sourceVideo = document.getElementById('source-video');
+  var videoPanel = document.getElementById('video-panel');
+  var videoUploadZone = document.getElementById('video-upload-zone');
+  var videoFileInput = document.getElementById('video-file-input');
+  var videoControls = document.getElementById('video-controls');
+  var videoPlayBtn = document.getElementById('video-play');
+  var videoRestartBtn = document.getElementById('video-restart');
+  var videoStopBtn = document.getElementById('video-stop');
+  var videoTimeCurrent = document.getElementById('video-time-current');
+  var videoTimeTotal = document.getElementById('video-time-total');
+  var videoProgressFill = document.getElementById('video-progress-fill');
+  var videoProgressBar = document.getElementById('video-progress-bar');
+  var videoSpeedBtns = document.querySelectorAll('.video-speed-btn');
+  var videoActive = false;
+  var videoPollTimer = null;
+
+  // ── Image source (one-shot inference) ──
+  var sourceImage = document.getElementById('source-image');
+  var imagePanel = document.getElementById('image-panel');
+  var imageUploadZone = document.getElementById('image-upload-zone');
+  var imageFileInput = document.getElementById('image-file-input');
+  var imageResultWrap = document.getElementById('image-result-wrap');
+  var imageRerun = document.getElementById('image-rerun');
+  var imageBack = document.getElementById('image-back');
+  var imageMode = false;
+  var imageObjectUrl = null;
+
+  function fmtTime(sec) {
+    var m = Math.floor(sec / 60);
+    var s = Math.floor(sec % 60);
+    return m + ':' + (s < 10 ? '0' : '') + s;
+  }
+
+  sourceCamera.addEventListener('click', function() {
+    if (sourceCamera.classList.contains('active')) return;
+    sourceCamera.classList.add('active');
+    sourceVideo.classList.remove('active');
+    sourceImage.classList.remove('active');
+    videoPanel.style.display = 'none';
+    imagePanel.style.display = 'none';
+    if (videoActive) stopVideoSource();
+    if (imageMode) backToLive();
+  });
+
+  sourceVideo.addEventListener('click', function() {
+    if (sourceVideo.classList.contains('active')) return;
+    sourceVideo.classList.add('active');
+    sourceCamera.classList.remove('active');
+    sourceImage.classList.remove('active');
+    imagePanel.style.display = 'none';
+    if (imageMode) backToLive();
+    videoPanel.style.display = '';
+  });
+
+  sourceImage.addEventListener('click', function() {
+    if (sourceImage.classList.contains('active')) return;
+    sourceImage.classList.add('active');
+    sourceCamera.classList.remove('active');
+    sourceVideo.classList.remove('active');
+    videoPanel.style.display = 'none';
+    if (videoActive) stopVideoSource();
+    imageMode = true;
+    imagePanel.style.display = '';
+    imageResultWrap.style.display = 'none';
+  });
+
+  imageUploadZone.addEventListener('click', function() { imageFileInput.click(); });
+  imageUploadZone.addEventListener('dragover', function(e) {
+    e.preventDefault();
+    imageUploadZone.classList.add('dragover');
+  });
+  imageUploadZone.addEventListener('dragleave', function() {
+    imageUploadZone.classList.remove('dragover');
+  });
+  imageUploadZone.addEventListener('drop', function(e) {
+    e.preventDefault();
+    imageUploadZone.classList.remove('dragover');
+    var files = e.dataTransfer.files;
+    if (files.length > 0) uploadImage(files[0]);
+  });
+  imageFileInput.addEventListener('change', function() {
+    if (this.files.length > 0) uploadImage(this.files[0]);
+    this.value = '';
+  });
+  imageRerun.addEventListener('click', function() { imageFileInput.click(); });
+  imageBack.addEventListener('click', function() { backToLive(); });
+
+  videoUploadZone.addEventListener('click', function() { videoFileInput.click(); });
+
+  videoUploadZone.addEventListener('dragover', function(e) {
+    e.preventDefault();
+    videoUploadZone.classList.add('dragover');
+  });
+  videoUploadZone.addEventListener('dragleave', function() {
+    videoUploadZone.classList.remove('dragover');
+  });
+  videoUploadZone.addEventListener('drop', function(e) {
+    e.preventDefault();
+    videoUploadZone.classList.remove('dragover');
+    var files = e.dataTransfer.files;
+    if (files.length > 0) uploadVideo(files[0]);
+  });
+
+  videoFileInput.addEventListener('change', function() {
+    if (this.files.length > 0) uploadVideo(this.files[0]);
+    this.value = '';
+  });
+
+  // ── Output mode toggle (MJPEG 360p / HD 1080P) ──
+  // "HD 1080P" reuses the platform's hardware H.264 pipeline:
+  //   camera-daemon main encoder (1920x1080@30) → platform-api H264Stream →
+  //   WebSocket /api/v1/h264/main → browser-native MSE.
+  // The AI overlay (detection boxes) is baked into the stream by camera-daemon's
+  // encoder-scoped OSD (consumes event-bus inference), so HD needs zero
+  // Python/CPU rendering. This is a compact vanilla-JS port of
+  // web/src/lib/videoStream/MSE (no build pipeline).
+  var outputMjpeg = document.getElementById('output-mjpeg');
+  var outputRtsp = document.getElementById('output-rtsp');   // now the "HD 1080P" button
+  var hdVideo = document.getElementById('hd-video');
+  var hdStats = document.getElementById('hd-stats');
+  var hdBadge = document.getElementById('hd-badge');
+  var hdOverlayCanvas = document.getElementById('hd-overlay-canvas');
+  var hdOverlayCtx = hdOverlayCanvas.getContext('2d');
+  var currentOutputMode = 'mjpeg';
+
+  function setOutputModeUI(mode) {
+    currentOutputMode = mode;
+    outputMjpeg.classList.toggle('active', mode === 'mjpeg');
+    outputRtsp.classList.toggle('active', mode === 'hd');
+  }
+
+  // ── minimal H264→fMP4 muxer (ported from web/.../MSE/utils/h264ToMp4.ts) ──
+  // Produces init (ftyp+moov) + media (moof+mdat) segments for MSE. The platform
+  // already broadcasts AVCC-format NALs (4-byte length prefix), so each access
+  // unit is fed as one mdat sample — no Annex-B conversion needed.
+  (function () {
+    function w32(a, o, v) { a[o] = (v >>> 24) & 255; a[o + 1] = (v >>> 16) & 255; a[o + 2] = (v >>> 8) & 255; a[o + 3] = v & 255; }
+    function w16(a, o, v) { a[o] = (v >>> 8) & 255; a[o + 1] = v & 255; }
+    function wstr(a, o, s) { for (var i = 0; i < s.length; i++) a[o + i] = s.charCodeAt(i); }
+    function box(type) {
+      var n = 8; for (var i = 1; i < arguments.length; i++) n += arguments[i].length;
+      var r = new Uint8Array(n); w32(r, 0, n); wstr(r, 4, type);
+      var o = 8; for (var j = 1; j < arguments.length; j++) { r.set(arguments[j], o); o += arguments[j].length; }
+      return r;
+    }
+    function fullbox(t, ver, flags, c) {
+      var fc = new Uint8Array(4 + c.length); fc[0] = ver; fc[1] = (flags >>> 16) & 255; fc[2] = (flags >>> 8) & 255; fc[3] = flags & 255; fc.set(c, 4);
+      return box(t, fc);
+    }
+    function cat() {
+      var n = 0; for (var i = 0; i < arguments.length; i++) n += arguments[i].length;
+      var r = new Uint8Array(n); var o = 0; for (var k = 0; k < arguments.length; k++) { r.set(arguments[k], o); o += arguments[k].length; }
+      return r;
+    }
+    function avcC(sps, pps) {
+      var c = new Uint8Array(11 + sps.length + pps.length), i = 0;
+      c[i++] = 1; c[i++] = sps[1]; c[i++] = sps[2]; c[i++] = sps[3]; c[i++] = 0xff; c[i++] = 0xe1;
+      c[i++] = (sps.length >> 8) & 255; c[i++] = sps.length & 255; c.set(sps, i); i += sps.length;
+      c[i++] = 1; c[i++] = (pps.length >> 8) & 255; c[i++] = pps.length & 255; c.set(pps, i);
+      return box('avcC', c);
+    }
+    function avc1(sps, pps, w, h) {
+      var a = avcC(sps, pps); var c = new Uint8Array(78 + a.length);
+      w16(c, 6, 1); w16(c, 24, w); w16(c, 26, h); w32(c, 28, 0x00480000); w32(c, 32, 0x00480000); w16(c, 40, 1); w16(c, 74, 0x0018); w16(c, 76, 0xffff); c.set(a, 78);
+      return box('avc1', c);
+    }
+    function stbl(sps, pps, w, h) {
+      return box('stbl', fullbox('stsd', 0, 0, cat(new Uint8Array([0, 0, 0, 1]), avc1(sps, pps, w, h))),
+        fullbox('stts', 0, 0, new Uint8Array([0, 0, 0, 0])), fullbox('stsc', 0, 0, new Uint8Array([0, 0, 0, 0])),
+        fullbox('stsz', 0, 0, new Uint8Array(12)), fullbox('stco', 0, 0, new Uint8Array([0, 0, 0, 0])));
+    }
+    function minf(sps, pps, w, h) { return box('minf', fullbox('vmhd', 0, 1, new Uint8Array(8)), box('dinf', fullbox('dref', 0, 0, cat(new Uint8Array([0, 0, 0, 1]), fullbox('url ', 0, 1, new Uint8Array(0))))), stbl(sps, pps, w, h)); }
+    function mdia(sps, pps, w, h) {
+      var mdhd = new Uint8Array(20); w32(mdhd, 8, 90000); w16(mdhd, 16, 0x55c4);
+      var hdlr = new Uint8Array(21); wstr(hdlr, 4, 'vide');
+      return box('mdia', fullbox('mdhd', 0, 0, mdhd), fullbox('hdlr', 0, 0, hdlr), minf(sps, pps, w, h));
+    }
+    function tkhd(w, h) { var c = new Uint8Array(80); w32(c, 8, 1); w32(c, 36, 0x00010000); w32(c, 52, 0x00010000); w32(c, 68, 0x40000000); w32(c, 72, w << 16); w32(c, 76, h << 16); return fullbox('tkhd', 0, 3, c); }
+    function trak(sps, pps, w, h) { return box('trak', tkhd(w, h), mdia(sps, pps, w, h)); }
+    function mvhd() { var c = new Uint8Array(96); w32(c, 8, 90000); w32(c, 16, 0x00010000); w16(c, 20, 0x0100); w32(c, 32, 0x00010000); w32(c, 48, 0x00010000); w32(c, 64, 0x40000000); w32(c, 92, 2); return fullbox('mvhd', 0, 0, c); }
+    function mvex() { var c = new Uint8Array(20); w32(c, 0, 1); w32(c, 4, 1); return box('mvex', fullbox('trex', 0, 0, c)); }
+    function moov(sps, pps, w, h) { return box('moov', mvhd(), trak(sps, pps, w, h), mvex()); }
+    function ftyp() { var c = new Uint8Array(20); wstr(c, 0, 'isom'); w32(c, 4, 512); wstr(c, 8, 'isom'); wstr(c, 12, 'iso2'); wstr(c, 16, 'avc1'); return box('ftyp', c); }
+    function moof(seq, dur, kf, bdt, ssz, cto) {
+      var mfhdC = new Uint8Array(4); w32(mfhdC, 0, seq);
+      var tfhd = fullbox('tfhd', 0, 0x20000, new Uint8Array([0, 0, 0, 1]));
+      var tfdtC = new Uint8Array(4); w32(tfdtC, 0, bdt); var tfdt = fullbox('tfdt', 0, 0, tfdtC);
+      var trunc = new Uint8Array(24); w32(trunc, 0, 1); w32(trunc, 4, 108); w32(trunc, 8, dur); w32(trunc, 12, ssiz_safe(ssz)); w32(trunc, 16, kf ? 0x02000000 : 0x01010000); w32(trunc, 20, (cto < 0 ? (cto >>> 0) : cto));
+      var trun = fullbox('trun', 1, 0xF01, trunc);
+      return box('moof', fullbox('mfhd', 0, 0, mfhdC), box('traf', tfhd, tfdt, trun));
+    }
+    function ssiz_safe(n) { return n > 0 ? n : 0; }
+    window.__H264Muxer = function () {
+      this.seq = 0; this.dur = 3000;     // 3000 ticks @90kHz ≈ 33.3ms (30fps)
+      this.createInit = function (sps, pps, w, h) { return cat(ftyp(), moov(sps, pps, w || 1920, h || 1080)); };
+      this.createSeg = function (nal, kf, dt, cto) { this.seq++; return cat(moof(this.seq, this.dur, kf, dt, nal.length, cto || 0), box('mdat', nal)); };
+      this.setFps = function (f) { var nd = Math.round(90000 / f); if (Math.abs(nd - this.dur) > 100) this.dur = nd; };
+    };
+  })();
+
+  // ── compact MSE player (ported feeding logic from web/.../MSE/msePlayer.ts) ──
+  // Wire format per WS message: 18-byte FrameHeaderV2 (magic 0xFFD8FF00, frameType,
+  // flags[bit0=hasDts], PTS@90kHz, DTS@90kHz, reserved) + AVCC NAL units.
+  // On connect the platform first sends cached SPS/PPS, each in its own frame.
+  function createHdPlayer(video) {
+    var ws = null, ms = null, sb = null, muxer = null;
+    var sps = null, pps = null, initialized = false, hasFirstI = false;
+    var spsW = 1920, spsH = 1080;
+    var firstPts, lastPts, fps = 30, nextTs = 0;
+    var queue = [], url = '', active = false, destroyed = false;
+    var mseOpen = false, retryTimer = null, mseErrs = 0, restartTimer = null;
+
+    function eqArr(a, b) { if (!a || !b || a.length !== b.length) return false; for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false; return true; }
+    function codecFromSps(s) { function h2(n) { return ('0' + n.toString(16)).slice(-2); } return 'avc1.' + h2(s[1]) + h2(s[2]) + h2(s[3]); }
+    // Exp-Golomb SPS width/height parse (fallback 1920x1080).
+    function parseSpsRes(spsNal) {
+      try {
+        if (spsNal.length < 5) return { w: 1920, h: 1080 };
+        var bp = 0, tot = spsNal.length * 8;
+        function rb() { if (bp >= tot) return 0; var by = bp >> 3, bi = 7 - (bp & 7); bp++; return (spsNal[by] >> bi) & 1; }
+        function rbs(n) { var v = 0; for (var i = 0; i < n; i++) v = (v << 1) | rb(); return v; }
+        function rue() { var z = 0; while (rb() === 0 && z < 32) z++; return z > 0 ? ((1 << z) - 1 + rbs(z)) : 0; }
+        bp = 32; var prof = spsNal[1]; rue();
+        if ([100, 110, 122, 244, 44, 83, 86, 118, 128, 138, 139, 134].indexOf(prof) >= 0) {
+          var cf = rue(); if (cf === 3) rb(); rue(); rue(); rb();
+          if (rb()) { var lim = cf !== 3 ? 8 : 12; for (var i = 0; i < lim; i++) { if (rb()) { var sz = i < 6 ? 16 : 64, ls = 8, ns = 8; for (var j = 0; j < sz; j++) { if (ns !== 0) { var cd = rue(); var dl = (cd & 1) ? (cd + 1) >> 1 : -(cd >> 1); ns = (ls + dl + 256) % 256; } ls = ns === 0 ? ls : ns; } } } }
+        }
+        rue(); var poct = rue();
+        if (poct === 0) { rue(); } else if (poct === 1) { rb(); rue(); rue(); var cnt = rue(); for (var i = 0; i < cnt; i++) rue(); }
+        rue(); rb();
+        var pw = rue(), ph = rue(), fmo = rb();
+        return { w: (pw + 1) * 16, h: (2 - fmo) * (ph + 1) * 16 };
+      } catch (e) { return { w: 1920, h: 1080 }; }
+    }
+
+    function append(buf) {
+      if (!sb || destroyed) return;
+      if (sb.updating) { queue.push(buf); return; }
+      try { sb.appendBuffer(buf); mseErrs = 0; } catch (e) { onMseError(); }
+    }
+    // Drain queue on each updateend, chase the live edge, and trim old buffer so
+    // latency stays bounded (matches web console's low-latency strategy).
+    function onUpd() {
+      if (destroyed || !sb) return;
+      if (queue.length) { var b = queue.shift(); try { sb.appendBuffer(b); } catch (e) { onMseError(); } return; }
+      try {
+        if (video.buffered.length) {
+          var end = video.buffered.end(video.buffered.length - 1);
+          // Live-edge chase: keep 300ms headroom (not 80ms) so segment-timing jitter
+          // doesn't land currentTime past the buffer end → black until next IDR.
+          if (end - video.currentTime > 1.2) { var target = end - 0.3; if (target > video.currentTime) video.currentTime = target; }
+          if (sb.buffered.length && video.currentTime > sb.buffered.start(0) + 6) { sb.remove(0, video.currentTime - 3); return; }
+        }
+      } catch (e) {}
+    }
+    function onMseError() { if (destroyed || !active) return; mseErrs++; if (mseErrs > 5) return; scheduleRestart(); }
+    function scheduleRestart() {
+      if (restartTimer || destroyed || !active) return;
+      restartTimer = setTimeout(function () { restartTimer = null; if (active && !destroyed) { teardownMse(); openMse(); if (url) connectWs(url); } }, 800);
+    }
+    function resetDecoder() { initialized = false; muxer = null; hasFirstI = false; nextTs = 0; firstPts = undefined; lastPts = undefined; pps = null; queue = []; }
+    function teardownMse() {
+      try { if (sb) { sb.removeEventListener('updateend', onUpd); sb.removeEventListener('error', onMseError); if (ms && ms.readyState === 'open') { try { sb.abort(); } catch (e) {} } } } catch (e) {}
+      sb = null; resetDecoder(); sps = null; mseOpen = false;
+      try { if (ms) { ms.removeEventListener('sourceopen', onSourceOpen); if (ms.readyState === 'open') { try { ms.endOfStream(); } catch (e) {} } } } catch (e) {}
+      try { if (video.src) URL.revokeObjectURL(video.src); } catch (e) {}
+      video.src = ''; ms = null;
+    }
+    function openMse() { if (!window.MediaSource) return false; ms = new MediaSource(); video.src = URL.createObjectURL(ms); ms.addEventListener('sourceopen', onSourceOpen); return true; }
+    function onSourceOpen() { mseOpen = true; try { video.play(); } catch (e) {} }
+
+    function feedFrame(nal, kf, pts) {
+      if (firstPts === undefined) firstPts = pts;
+      if (lastPts !== undefined && pts > lastPts) { var d = pts - lastPts; if (d >= 1500 && d <= 18000) { var mf = Math.round(90000 / d); if (mf !== fps && mf >= 5 && mf <= 60) { fps = mf; if (muxer) muxer.setFps(mf); } } }
+      lastPts = pts;
+      var dt = nextTs; nextTs += Math.round(90000 / fps);
+      var relPts = (pts - firstPts) | 0;
+      var cto = relPts - dt;
+      append(muxer.createSeg(nal, kf, dt, cto).buffer);
+    }
+
+    function handleMsg(buf) {
+      if (destroyed) return;
+      var dv = new DataView(buf), data, kf = false, pts = 0;
+      if (buf.byteLength >= 10 && dv.getUint32(0, false) === 0xFFD8FF00) {
+        // Keyframe is derived from the NAL type (IDR=5) below; the header
+        // FrameType byte is not an I/P-frame flag on this platform's stream.
+        var flags = dv.getUint8(5), hasDts = (flags & 0x01) !== 0;
+        pts = dv.getUint32(6, false);
+        data = (buf.byteLength >= 18 && hasDts) ? new Uint8Array(buf, 18) : new Uint8Array(buf, 10);
+      } else { data = new Uint8Array(buf); }
+
+      var off = 0, chunks = [], sawVCL = false;
+      while (off + 4 <= data.length) {
+        var len = ((data[off] << 24) | (data[off + 1] << 16) | (data[off + 2] << 8) | data[off + 3]) >>> 0;
+        if (len === 0 || len > data.length - off - 4) break;
+        var nal = data.subarray(off + 4, off + 4 + len);
+        var nt = nal.length ? (nal[0] & 0x1f) : 0;
+        if (nt === 7) {
+          // Compare resolution + profile/level, NOT raw bytes. The platform re-sends
+          // an equivalent SPS (cached on connect at AddClient, or re-emitted with an
+          // IDR); byte-different but semantically-equal SPS must NOT trigger a full
+          // teardown+reconnect — that was the flicker source.
+          var r = parseSpsRes(nal);
+          var sameDim = sps && spsW === r.w && spsH === r.h;
+          var sameCodec = sps && sps[1] === nal[1] && sps[2] === nal[2] && sps[3] === nal[3];
+          if (!sps || !(sameDim && sameCodec)) {
+            if (initialized) { scheduleRestart(); off += 4 + len; continue; }  // real resolution/profile change only
+            resetDecoder();
+            sps = nal.slice(); spsW = r.w; spsH = r.h;
+          } else {
+            sps = nal.slice();  // semantically equal: refresh cached bytes, keep playing
+          }
+        } else if (nt === 8) {
+          pps = nal.slice();
+        } else if (nt !== 6 && nt !== 9) {
+          kf = kf || (nt === 5);
+          if (initialized && muxer) {
+            if (!hasFirstI) { if (kf) { hasFirstI = true; } else { off += 4 + len; continue; } }
+            var av = new Uint8Array(4 + nal.length); av[0] = (nal.length >>> 24) & 255; av[1] = (nal.length >>> 16) & 255; av[2] = (nal.length >>> 8) & 255; av[3] = nal.length & 255; av.set(nal, 4);
+            chunks.push(av); sawVCL = true;
+          }
+        }
+        off += 4 + len;
+      }
+
+      if (!initialized && sps && pps && mseOpen) {
+        try {
+          muxer = new window.__H264Muxer(); muxer.setFps(fps);
+          var codec = codecFromSps(sps);
+          if (!MediaSource.isTypeSupported('video/mp4; codecs="' + codec + '"')) { onMseError(); return; }
+          sb = ms.addSourceBuffer('video/mp4; codecs="' + codec + '"');
+          sb.mode = 'segments';
+          sb.addEventListener('updateend', onUpd);
+          sb.addEventListener('error', onMseError);
+          initialized = true; mseErrs = 0;
+          append(muxer.createInit(sps, pps, spsW, spsH).buffer);
+        } catch (e) { onMseError(); }
+      }
+
+      if (sawVCL && chunks.length && muxer) {
+        var tot = 0; for (var i = 0; i < chunks.length; i++) tot += chunks[i].length;
+        var merged = new Uint8Array(tot), o = 0; for (var i = 0; i < chunks.length; i++) { merged.set(chunks[i], o); o += chunks[i].length; }
+        feedFrame(merged, kf, pts);
+      }
+    }
+
+    function connectWs(u) {
+      try { ws = new WebSocket(u); } catch (e) { scheduleRestart(); return; }
+      ws.binaryType = 'arraybuffer';
+      ws.onmessage = function (ev) { handleMsg(ev.data); };
+      ws.onopen = function () { mseErrs = 0; };
+      ws.onclose = function () { if (active && !destroyed) { retryTimer = setTimeout(function () { retryTimer = null; if (active && !destroyed && url) connectWs(url); }, 1200); } };
+      ws.onerror = function () { try { ws.close(); } catch (e) {} };
+    }
+
+    return {
+      start: function (u) { url = u; active = true; destroyed = false; mseErrs = 0; resetDecoder(); sps = null; pps = null; openMse(); connectWs(u); },
+      stop: function () {
+        active = false;
+        if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+        if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
+        if (ws) { ws.onclose = null; ws.onerror = null; ws.onmessage = null; try { ws.close(); } catch (e) {} ws = null; }
+        teardownMse();
+      }
+    };
+  }
+
+  var hdPlayer = createHdPlayer(hdVideo);
+  // Size the HD overlay canvas to the video's intrinsic resolution as soon as the
+  // first SPS is decoded, then redraw boxes at the correct scale.
+  hdVideo.addEventListener('loadedmetadata', function () {
+    var vw = hdVideo.videoWidth || 1920, vh = hdVideo.videoHeight || 1080;
+    if (hdOverlayCanvas.width !== vw || hdOverlayCanvas.height !== vh) {
+      hdOverlayCanvas.width = vw; hdOverlayCanvas.height = vh;
+    }
+    drawHdOverlay();
+  });
+
+  function updateHdStats() {
+    var s = latestStatsData || {}, parts = [currentModel || '--'];
+    if (s.hw_infer_time_ms !== undefined && s.hw_infer_time_ms > 0) parts.push('NPU: ' + s.hw_infer_time_ms.toFixed(1) + 'ms');
+    if (s.hw_fps !== undefined && s.hw_fps > 0) parts.push(s.hw_fps.toFixed(1) + 'fps');
+    if (s.device_utilization !== undefined && s.device_utilization > 0) parts.push('NPU: ' + s.device_utilization.toPrecision(2) + '%');
+    parts.push('#' + (s.frame_count || s.infer_count || '--'));
+    hdStats.textContent = parts.join('  |  ');
+  }
+  // Segmentation/depth have no event-bus payload, so camera-daemon can't draw
+  // their overlay. HD shows clean 1080p with a small badge.
+  function updateHdBadge() {
+    var t = (currentModelType || '').toLowerCase();
+    if (t.indexOf('seg') >= 0 || t.indexOf('depth') >= 0 || t.indexOf('matte') >= 0) {
+      hdBadge.textContent = 'Clean video - no AI overlay for segmentation/depth'; hdBadge.style.display = '';
+    } else { hdBadge.style.display = 'none'; }
+  }
+  function enterHd() {
+    if (!window.HD_PREVIEW || !window.HD_PREVIEW.enabled) { showToast('HD 1080P is disabled; PLATFORM_API_TOKEN is required', 'error'); setOutputModeUI('mjpeg'); return; }
+    if (!window.MediaSource) { showToast('This browser does not support MSE, so HD preview is unavailable', 'error'); setOutputModeUI('mjpeg'); return; }
+    // stream-wrapper has no CSS height - it normally takes its size from the
+    // in-flow <img>. Hiding <img>+<canvas> for HD would collapse the wrapper to
+    // 0 and the absolutely-positioned <video> would render 0x0 (frames decode
+    // but nothing is painted). Pin the box height from the current MJPEG rect
+    // (fallback 16:9 of width), restore on exit.
+    var wr = streamWrapper.getBoundingClientRect();
+    var w = wr.width || streamImg.clientWidth || 640;
+    var h = wr.height || streamImg.clientHeight || Math.round(w * 9 / 16);
+    if (h < 120) h = Math.round(w * 9 / 16);
+    streamWrapper.style.height = h + 'px';
+    streamImg.style.display = 'none';
+    overlayCanvas.style.display = 'none';
+    hdVideo.style.display = '';
+    hdStats.style.display = '';
+    if (!hdOverlayCanvas.width) { hdOverlayCanvas.width = 1920; hdOverlayCanvas.height = 1080; }
+    hdOverlayCanvas.style.display = '';
+    loading.classList.add('hidden');
+    updateHdBadge();
+    hdPlayer.start(window.HD_PREVIEW.wsUrl);
+  }
+  function exitHd() {
+    hdPlayer.stop();
+    hdVideo.style.display = 'none';
+    hdStats.style.display = 'none';
+    hdBadge.style.display = 'none';
+    hdOverlayCtx.clearRect(0, 0, hdOverlayCanvas.width, hdOverlayCanvas.height);
+    hdOverlayCanvas.style.display = 'none';
+    streamWrapper.style.height = '';
+    streamImg.style.display = '';
+    overlayCanvas.style.display = '';
+  }
+
+  function switchOutputMode(mode) {
+    if (mode === 'hd') { enterHd(); setOutputModeUI('hd'); return; }
+    exitHd();
+    setOutputModeUI('mjpeg');
+    // Keep the backend MJPEG preview pipeline active.
+    fetch('/api/output-mode', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'mjpeg' }) }).catch(function () {});
+  }
+
+  outputMjpeg.addEventListener('click', function () { switchOutputMode('mjpeg'); });
+  outputRtsp.addEventListener('click', function () { switchOutputMode('hd'); });
+  setOutputModeUI('mjpeg');
+
+  function uploadVideo(file) {
+    videoUploadZone.innerHTML = '<div class="spinner" style="margin:0 auto 8px"></div><span>Uploading...</span>';
+    var fd = new FormData();
+    fd.append('video', file);
+    fetch('/api/video/upload', { method: 'POST', body: fd })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.error) {
+          showToast('Upload failed: ' + data.error, 'error');
+          resetUploadZone();
+          return;
+        }
+        videoActive = true;
+        videoUploadZone.style.display = 'none';
+        videoControls.style.display = '';
+        videoTimeTotal.textContent = fmtTime(data.duration || 0);
+        showToast('Video loaded: ' + data.width + 'x' + data.height, 'success');
+        startVideoPoll();
+      })
+      .catch(function(err) {
+        showToast('Upload error: ' + err.message, 'error');
+        resetUploadZone();
+      });
+  }
+
+  function resetUploadZone() {
+    videoUploadZone.style.display = '';
+    videoUploadZone.innerHTML =
+      '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>' +
+      '<span class="video-upload-text">Drop video file or click to upload</span>' +
+      '<span class="video-upload-hint">MP4 / AVI / MKV / MOV (max 500MB)</span>';
+  }
+
+  // ── Image inference (one-shot) ──
+  function uploadImage(file) {
+    imageUploadZone.innerHTML = '<div class="spinner" style="margin:0 auto 8px"></div><span>Running inference...</span>';
+    var fd = new FormData();
+    fd.append('image', file);
+    fetch('/api/image/upload', { method: 'POST', body: fd })
+      .then(function(r) {
+        if (!r.ok) {
+          return r.json().then(function(d) { throw new Error(d.error || 'Inference failed'); });
+        }
+        var stats = null;
+        try { stats = JSON.parse(r.headers.get('X-Infer-Stats') || '{}'); } catch (e) {}
+        return r.blob().then(function(blob) { return { blob: blob, stats: stats }; });
+      })
+      .then(function(res) {
+        if (imageObjectUrl) URL.revokeObjectURL(imageObjectUrl);
+        imageObjectUrl = URL.createObjectURL(res.blob);
+        // Display the annotated result in the main stream surface (replaces MJPEG).
+        // The server-baked JPEG already carries the overlay, so clear the live
+        // overlayCanvas — otherwise the last MJPEG overlay (boxes/labels) stays
+        // painted on top of the result image.
+        streamImg.onload = null;
+        streamImg.onerror = null;
+        overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+        streamImg.src = imageObjectUrl;
+        imageUploadZone.style.display = 'none';
+        imageResultWrap.style.display = '';
+        if (res.stats) {
+          var ms = ((res.stats.hw_infer_time_us || res.stats.infer_time_us || 0) / 1000.0);
+          showToast(res.stats.model + ' · ' + ms.toFixed(1) + 'ms · ' +
+                     res.stats.width + 'x' + res.stats.height, 'success');
+          if (statHwInfer) statHwInfer.textContent = ms.toFixed(1) + ' ms';
+          if (statModel) statModel.textContent = res.stats.model;
+        }
+      })
+      .catch(function(err) {
+        showToast('Image inference failed: ' + err.message, 'error');
+        resetImageZone();
+      });
+  }
+
+  function resetImageZone() {
+    imageUploadZone.style.display = '';
+    imageUploadZone.innerHTML =
+      '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>' +
+      '<span class="video-upload-text">Drop image file or click to upload</span>' +
+      '<span class="video-upload-hint">JPG / PNG / BMP / WEBP (max 50MB) — single-shot inference</span>';
+  }
+
+  function backToLive() {
+    if (imageObjectUrl) { URL.revokeObjectURL(imageObjectUrl); imageObjectUrl = null; }
+    imageMode = false;
+    imagePanel.style.display = 'none';
+    imageResultWrap.style.display = 'none';
+    resetImageZone();
+    sourceImage.classList.remove('active');
+    sourceCamera.classList.add('active');
+    startMjpegStream();
+  }
+
+  videoPlayBtn.addEventListener('click', function() {
+    var isPaused = videoPlayBtn.classList.contains('paused');
+    fetch('/api/video/control', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action: isPaused ? 'play' : 'pause'})
+    }).then(function(r) { return r.json(); }).then(function(d) {
+      updatePlayBtn(d.paused);
+    });
+  });
+
+  videoRestartBtn.addEventListener('click', function() {
+    fetch('/api/video/control', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action: 'restart'})
+    });
+  });
+
+  videoStopBtn.addEventListener('click', function() { stopVideoSource(); });
+
+  videoSpeedBtns.forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      videoSpeedBtns.forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      fetch('/api/video/control', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({action: 'speed', speed: parseFloat(btn.getAttribute('data-speed'))})
+      });
+    });
+  });
+
+  videoProgressBar.addEventListener('click', function(e) {
+    var rect = videoProgressBar.getBoundingClientRect();
+    var pct = (e.clientX - rect.left) / rect.width;
+    fetch('/api/video/status').then(function(r) { return r.json(); }).then(function(d) {
+      if (!d.active) return;
+      fetch('/api/video/control', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({action: 'seek', position: pct * d.duration})
+      });
+    });
+  });
+
+  function updatePlayBtn(paused) {
+    if (paused) {
+      videoPlayBtn.classList.add('paused');
+      videoPlayBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
+    } else {
+      videoPlayBtn.classList.remove('paused');
+      videoPlayBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
+    }
+  }
+
+  function startVideoPoll() {
+    if (videoPollTimer) clearInterval(videoPollTimer);
+    videoPollTimer = setInterval(function() {
+      fetch('/api/video/status')
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          if (!d.active) {
+            stopVideoPoll();
+            return;
+          }
+          videoTimeCurrent.textContent = fmtTime(d.position || 0);
+          videoProgressFill.style.width = ((d.progress || 0) * 100) + '%';
+          updatePlayBtn(d.paused);
+        })
+        .catch(function() {});
+    }, 500);
+  }
+
+  function stopVideoPoll() {
+    if (videoPollTimer) { clearInterval(videoPollTimer); videoPollTimer = null; }
+  }
+
+  function stopVideoSource() {
+    stopVideoPoll();
+    videoActive = false;
+    fetch('/api/video/control', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action: 'stop'})
+    });
+    videoControls.style.display = 'none';
+    videoUploadZone.style.display = '';
+    resetUploadZone();
+    videoPanel.style.display = 'none';
+    sourceCamera.classList.add('active');
+    sourceVideo.classList.remove('active');
+  }
+
+  // ── Init ──
+  loadModels();
+  checkHealth();
+  handleHash();
+})();
+</script>
+{% endblock %}

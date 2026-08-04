@@ -1,0 +1,237 @@
+# AIPC Platform Application Manifest
+# Full field reference template
+
+apiVersion: v1
+kind: Application
+
+# ============================================
+# Metadata (required)
+# ============================================
+metadata:
+  id: my_app                          # Unique app ID (required, lowercase letters, digits, underscores)
+  name: My Application                # Display name (required)
+  version: 1.0.0                      # Semantic version (required)
+  description: Application description # App description (required)
+  author: Your Name                   # Author name (optional)
+  email: you@example.com              # Contact email (optional)
+
+# ============================================
+# App specification
+# ============================================
+spec:
+  # Container image (required). This is the tag produced by docker build -t.
+  image: aipc/my-app:1.0.0
+
+  # --------------------------------------------
+  # Resource limits
+  # --------------------------------------------
+  resources:
+    cpu: "50%"                        # CPU limit: "50%" or "0.5" cores
+    memory: "256Mi"                   # Memory limit: "256Mi" or "1Gi"
+
+  # --------------------------------------------
+  # Permission configuration
+  # --------------------------------------------
+  permissions:
+    # Video stream access
+    video:
+      - cam0_main.raw                 # Raw video stream (SHM)
+      - cam0_sub.raw                  # Sub stream
+      - cam0_main                     # Encoded video stream (Unix socket)
+
+    # AI inference permissions
+    inference:
+      models:                         # Allowed model IDs
+        - person_vehicle_v1
+        - face_detection_v1
+      max_qps: 30                     # Maximum QPS
+      max_concurrent: 2               # Maximum concurrent inferences
+      allow_register_model: false     # Whether this app may register models
+
+    # Event bus permissions
+    events:
+      publish:                        # Topics this app can publish (wildcards supported)
+        - app/my_app/*
+        - alerts/*
+      subscribe:                      # Topics this app can subscribe to (wildcards supported)
+        - model/*/detections
+        - system/*
+
+    # Device-control permissions
+    device:
+      light: true                     # White light control
+      ir_cut: true                    # IR-cut control
+      ptz: false                      # PTZ control
+      lens: false                     # Lens zoom/focus control
+      gpio:
+        read: [12, 13]                # GPIO pins this app may read
+        write: [21, 22]               # GPIO pins this app may write
+
+    # Network access
+    network:
+      mode: isolated                  # Network mode: "isolated" (default) or "host"
+      outbound:                       # Allowed outbound destinations in isolated mode
+        - "https://api.example.com"
+        - "mqtt://broker.example.com:8883"
+      inbound:                        # Inbound ports for host mode
+        - 8554
+
+  # --------------------------------------------
+  # Environment variables
+  # --------------------------------------------
+  env:
+    - name: APP_MODE
+      value: production
+    - name: DEBUG
+      value: "0"
+    - name: CONFIDENCE_THRESHOLD
+      value: "0.7"
+
+  # --------------------------------------------
+  # Volume mounts
+  # --------------------------------------------
+  volumes:
+    - host: /data/aipc/data/my_app
+      container: /app/data
+      readonly: false
+    - host: /data/aipc/logs/my_app
+      container: /app/logs
+      readonly: false
+
+  # --------------------------------------------
+  # Startup configuration
+  # --------------------------------------------
+  autostart: true                     # Start automatically when the system starts
+  restart_policy: on-failure          # Restart policy: "always", "on-failure", "no"
+  restart_max_retries: 3              # Maximum retry count for restart_policy=on-failure
+
+  # --------------------------------------------
+  # Security configuration (optional, strict by default)
+  # --------------------------------------------
+  # security:
+  #   no_new_privileges: true          # Prevent privilege escalation (default true)
+  #   readonly_rootfs: true            # Use a read-only root filesystem (default true)
+
+  # --------------------------------------------
+  # Dev Mode (development with hot reload)
+  # --------------------------------------------
+  # dev:
+  #   enabled: true                    # Enable dev mode for hot reload
+  #   watch_path: /app                 # Path inside container to watch
+  #   sync:                            # Host source -> container bind mounts
+  #     - host: ./                     # Local source directory
+  #       container: /app              # Container mount point
+  #   reload_signal: SIGTERM           # Signal for reload (SIGTERM or SIGHUP)
+  #   debug_port: 5678                 # Optional debugpy port for IDE attach
+
+  # --------------------------------------------
+  # Auto-restart configuration (advanced)
+  # --------------------------------------------
+  auto_restart:
+    enabled: true                     # Enable auto restart
+    max_retries: 5                    # Maximum retry count
+    retry_delay_seconds: 3            # Initial retry delay in seconds
+    backoff_multiplier: 2.0           # Exponential backoff multiplier
+
+  # --------------------------------------------
+  # Health check
+  # --------------------------------------------
+  healthcheck:
+    enabled: true                     # Enable health checks
+    interval: 30s                     # Check interval
+    timeout: 5s                       # Check timeout
+    retries: 3                        # Failure retry count
+
+  # ============================================
+  # Plugin system (optional)
+  # ============================================
+
+  # --------------------------------------------
+  # Plugin declaration, used when this app provides plugin capabilities
+  # --------------------------------------------
+  plugin:
+    capabilities:
+      - id: rtsp-server               # Unique capability ID
+        version: "1.0"                # Capability version
+        transport: both               # Transport: "grpc", "event", or "both"
+        description: RTSP streaming server
+        proto: "rtsp.RtspService"     # gRPC service definition for grpc/both
+        topics:                       # Event topics for event/both
+          publish:
+            - "plugin/rtsp/stream-status"
+            - "plugin/rtsp/client-connected"
+          subscribe:
+            - "system/video-config-changed"
+
+  # --------------------------------------------
+  # Plugin dependencies, used when this app depends on other plugins
+  # --------------------------------------------
+  plugin_dependencies:
+    - capability: rtsp-server         # Required capability ID
+      version: "1.0"                  # Required version (optional)
+      optional: false                 # Whether the dependency is optional
+
+# ============================================
+# Multi-container mode example
+# Use spec.containers to define multiple containers.
+# The main container can access platform services; sub containers are isolated.
+# ============================================
+#
+#  apiVersion: v1
+#  kind: Application
+#
+#  metadata:
+#    id: smart_detection
+#    name: Smart Detection App
+#    version: 1.0.0
+#
+#  spec:
+#    # Multi-container definition
+#    containers:
+#      # Main container: the only container that can access platform services
+#      main:
+#        image: smart-detection-main:1.0
+#        role: main                    # Required role declaration
+#        permissions:
+#          video: [cam0_main.raw]
+#          inference:
+#            models: [yolov8n]
+#        resources:
+#          cpu: "100%"
+#          memory: "512Mi"
+#        env:
+#          - name: SUB_DETECTOR_ADDR
+#            value: "detector:50051"
+#        ports:
+#          - containerPort: 8080
+#            protocol: TCP
+#
+#      # Sub container: detector
+#      detector:
+#        image: smart-detection-detector:1.0
+#        role: sub                     # Declares this as a sub container
+#        # Sub containers cannot define permissions.
+#        resources:
+#          cpu: "50%"
+#          memory: "256Mi"
+#        ports:
+#          - containerPort: 50051
+#            protocol: TCP
+#
+#    # Network configuration
+#    networking:
+#      mode: internal                  # internal | bridge | host
+#
+#    # Lifecycle configuration
+#    lifecycle:
+#      startup_order:                  # Startup order
+#        - detector                    # Start detector first
+#        - main                        # Start main second
+#      shutdown_order:                 # Shutdown order
+#        - main                        # Stop main first
+#        - detector                    # Stop detector second
+#
+#    # Shared volume mounts
+#    volumes:
+#      - host: /data/aipc/data/smart_detection
+#        container: /app/data

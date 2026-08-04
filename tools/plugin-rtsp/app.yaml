@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: Application
+metadata:
+  id: plugin-rtsp
+  name: RTSP Streaming Server
+  version: 1.0.0
+  description: RTSP server plugin - receives encoded video from camera-daemon and serves RTSP clients
+  author: AIPC Platform
+
+spec:
+  image: registry.local/plugin-rtsp:1.0.0
+
+  resources:
+    cpu: "25%"
+    memory: "128Mi"
+
+  # Plugin declaration: this app provides RTSP capability
+  plugin:
+    capabilities:
+      - id: rtsp-server
+        version: "1.0"
+        transport: both
+        description: RTSP streaming server for encoded video
+        proto: "rtsp.RtspService"
+        topics:
+          publish:
+            - "plugin/rtsp/stream-status"
+            - "plugin/rtsp/client-connected"
+            - "plugin/rtsp/client-disconnected"
+
+  permissions:
+    video:
+      - cam0_main
+    events:
+      publish:
+        - "plugin/rtsp/**"
+    network:
+      mode: host
+      inbound:
+        - 8554
+
+  env:
+    - name: RTSP_PORT
+      value: "8554"
+    - name: ENCODED_SOCK
+      value: "/run/aipc/encoded/main.sock"
+
+  healthcheck:
+    enabled: false
+
+  autostart: true
+  restart_policy: always
+  auto_restart:
+    enabled: true
+    max_retries: 5
+    retry_delay_seconds: 3
+    backoff_multiplier: 2.0

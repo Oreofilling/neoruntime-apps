@@ -1,0 +1,26 @@
+# Hello World Application Manifest
+# Minimal example for testing the AIPC platform
+
+apiVersion: v1
+kind: Application
+
+metadata:
+  id: hello-world
+  name: Hello World
+  version: 1.0.0
+  description: A simple hello world application that prints continuously
+  author: AIPC Team
+
+spec:
+  # Container image
+  image: aipc/hello-world:1.0.0
+
+  # Minimal resource limits
+  resources:
+    cpu: "10%"
+    memory: "32Mi"
+
+  # Startup configuration
+  autostart: false
+  restart_policy: on-failure
+  restart_max_retries: 3

@@ -1,0 +1,60 @@
+# AIPC Platform Application Manifest
+# CLIP Zero-Shot Viewer - real-time zero-shot image classification demo
+
+apiVersion: v1
+kind: Application
+
+metadata:
+  id: clip-viewer
+  name: CLIP Zero-Shot Viewer
+  version: 2.1.0
+  description: Real-time zero-shot image classification using CLIP model with custom text labels
+  author: AIPC Team
+
+spec:
+  # Container image
+  image: aipc/clip-viewer:2.1.0
+
+  # Resource limits
+  resources:
+    cpu: "50%"
+    memory: "512Mi"
+
+  # Permission configuration
+  permissions:
+    # Video stream access (for future frame capture features)
+    video:
+      - third.raw
+
+    # AI Inference permissions
+    inference:
+      models:
+        - clip_image_encoder
+      max_qps: 30
+      max_concurrent: 2
+      allow_register_model: false
+
+    # Network - host mode to expose web port
+    network:
+      mode: host
+
+  # Environment variables
+  env:
+    - name: WEB_PORT
+      value: "8888"
+    - name: DEFAULT_LABELS
+      value: "a person,a car,a dog,a cat,empty scene"
+    - name: LOG_LEVEL
+      value: "INFO"
+
+  # Startup configuration
+  autostart: false
+  restart_policy: on-failure
+  restart_max_retries: 3
+
+  # Health check
+  healthcheck:
+    enabled: true
+    interval: 30s
+    timeout: 5s
+    retries: 3

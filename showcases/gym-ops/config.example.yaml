@@ -1,0 +1,102 @@
+# GymOps configuration overlay — deployed to /data/aipc/etc/gym-ops/config.yaml
+#
+# This file is loaded by config.py as a YAML overlay on top of environment
+# variables. Zones and equipment are defined here because their polygon
+# coordinates and capacities are site-specific and cannot be set via env.
+#
+# Coordinate system: normalized [0,1] where (0,0) is top-left, (1,1) is
+# bottom-right of the camera frame.
+
+# ---- zones (counted for occupancy + crowd alerts) ----
+zones:
+  - id: "z1"
+    name: "Free Weight Area"
+    capacity: 8
+    polygon:
+      - [0.0, 0.0]
+      - [0.5, 0.0]
+      - [0.5, 0.6]
+      - [0.0, 0.6]
+
+  - id: "z2"
+    name: "Cardio Zone"
+    capacity: 10
+    polygon:
+      - [0.5, 0.0]
+      - [1.0, 0.0]
+      - [1.0, 0.6]
+      - [0.5, 0.6]
+
+  - id: "z3"
+    name: "Stretching Area"
+    capacity: 4
+    polygon:
+      - [0.0, 0.6]
+      - [1.0, 0.6]
+      - [1.0, 1.0]
+      - [0.0, 1.0]
+
+  # Example forbidden zone — triggers gym/alerts type=forbidden_zone
+  # - id: "z4"
+  #   name: "Staff Only"
+  #   forbidden: true
+  #   capacity: 0
+  #   polygon:
+  #     - [0.9, 0.0]
+  #     - [1.0, 0.0]
+  #     - [1.0, 0.15]
+  #     - [0.9, 0.15]
+
+# ---- equipment (tracked for occupancy + long-usage alerts) ----
+equipment:
+  - id: "e1"
+    name: "Squat Rack A"
+    zone_id: "z1"
+    polygon:
+      - [0.05, 0.10]
+      - [0.20, 0.10]
+      - [0.20, 0.25]
+      - [0.05, 0.25]
+
+  - id: "e2"
+    name: "Squat Rack B"
+    zone_id: "z1"
+    polygon:
+      - [0.25, 0.10]
+      - [0.40, 0.10]
+      - [0.40, 0.25]
+      - [0.25, 0.25]
+
+  - id: "e3"
+    name: "Bench Press"
+    zone_id: "z1"
+    polygon:
+      - [0.05, 0.30]
+      - [0.20, 0.30]
+      - [0.20, 0.45]
+      - [0.05, 0.45]
+
+  - id: "e4"
+    name: "Treadmill 1"
+    zone_id: "z2"
+    polygon:
+      - [0.55, 0.10]
+      - [0.70, 0.10]
+      - [0.70, 0.25]
+      - [0.55, 0.25]
+
+  - id: "e5"
+    name: "Treadmill 2"
+    zone_id: "z2"
+    polygon:
+      - [0.75, 0.10]
+      - [0.90, 0.10]
+      - [0.90, 0.25]
+      - [0.75, 0.25]
+
+# ---- after-hours (closed-hours presence alert) ----
+# When people are detected during these hours, gym/alerts type=after_hours
+# is published (cooldown-gated). Supports overnight wrap (22:00→06:00).
+after_hours:
+  start: "22:00"
+  end: "06:00"

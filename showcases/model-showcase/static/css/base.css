@@ -1,0 +1,97 @@
+/* ================================================================
+   NE503 — Base Reset & Typography
+   Aesthetic: Minimalist, airy, Mi Sans, clean
+   ================================================================ */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: 1.6;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+}
+
+/* Ambient liquid light background */
+body::before {
+  content: '';
+  position: fixed;
+  top: -30%;
+  left: -20%;
+  width: 80%;
+  height: 80%;
+  background:
+    radial-gradient(ellipse at 20% 50%, rgba(91,184,176,0.05), transparent 50%),
+    radial-gradient(ellipse at 80% 30%, rgba(166,142,200,0.04), transparent 50%),
+    radial-gradient(ellipse at 50% 80%, rgba(104,120,168,0.03), transparent 40%);
+  pointer-events: none;
+  z-index: 0;
+  animation: liquid-drift 20s ease-in-out infinite alternate;
+}
+
+body::after {
+  content: '';
+  position: fixed;
+  bottom: -20%;
+  right: -10%;
+  width: 60%;
+  height: 60%;
+  background:
+    radial-gradient(ellipse at 70% 40%, rgba(166,142,200,0.04), transparent 50%),
+    radial-gradient(ellipse at 30% 70%, rgba(91,184,176,0.03), transparent 40%);
+  pointer-events: none;
+  z-index: 0;
+  animation: liquid-drift 25s ease-in-out infinite alternate-reverse;
+}
+
+@keyframes liquid-drift {
+  0%   { transform: translate(0, 0) scale(1); }
+  33%  { transform: translate(30px, -20px) scale(1.05); }
+  66%  { transform: translate(-20px, 15px) scale(0.98); }
+  100% { transform: translate(10px, -10px) scale(1.02); }
+}
+
+/* All content above ambient */
+body > * { position: relative; z-index: 1; }
+
+a {
+  color: var(--text-accent);
+  text-decoration: none;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+a:hover { opacity: 0.75; }
+
+img { display: block; max-width: 100%; }
+
+input, textarea, select, button {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  outline: none;
+}
+
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.08);
+  border-radius: var(--radius-full);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.14);
+}
+* { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.08) transparent; }

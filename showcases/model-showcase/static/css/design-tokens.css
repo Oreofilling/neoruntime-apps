@@ -1,0 +1,108 @@
+/* ================================================================
+   NE503 AI Showcase — Design Tokens
+   Aesthetic: Xiaomi Mimo × Tech-Noir × Liquid Iridescence
+   Palette: Deep charcoal, pure black, teal, lavender, silver
+   ================================================================ */
+
+:root {
+  /* ── Surfaces ── */
+  --bg-base: #0a0a0c;
+  --bg-surface: #111114;
+  --bg-elevated: #18181c;
+  --bg-inset: #07070a;
+
+  /* ── Text ── */
+  --text-primary: #e8e8ec;
+  --text-secondary: #8a8a99;
+  --text-muted: #55556a;
+  --text-accent: #8ec8c8;
+
+  /* ── Accents ── */
+  --accent-teal: #5bb8b0;
+  --accent-lavender: #a68ec8;
+  --accent-silver: #b8b8cc;
+  --accent-success: #6bc8a0;
+  --accent-warning: #c8b068;
+  --accent-danger: #c86868;
+
+  /* ── Iridescent Gradients ── */
+  --iridescent-1: linear-gradient(135deg, #3a8a8a, #8868a8, #6878a8);
+  --iridescent-2: linear-gradient(135deg, #2a6a6a, #6848a0, #4868a0);
+  --iridescent-subtle: linear-gradient(135deg, rgba(58,138,138,0.15), rgba(136,104,168,0.15), rgba(104,120,168,0.15));
+
+  /* ── Borders ── */
+  --border-subtle: rgba(255,255,255,0.04);
+  --border-default: rgba(255,255,255,0.07);
+  --border-strong: rgba(255,255,255,0.12);
+  --border-accent: rgba(91,184,176,0.3);
+
+  /* ── Glass ── */
+  --glass-bg: rgba(16,16,20,0.6);
+  --glass-blur: 24px;
+  --glass-border: rgba(255,255,255,0.06);
+
+  /* ── Glow ── */
+  --glow-teal: 0 0 40px rgba(91,184,176,0.08);
+  --glow-lavender: 0 0 40px rgba(166,142,200,0.06);
+  --glow-iridescent: 0 0 60px rgba(91,184,176,0.06), 0 0 120px rgba(166,142,200,0.04);
+  --glow-subtle: 0 0 30px rgba(91,184,176,0.04);
+
+  /* ── Type Badges ── */
+  --badge-detection-bg: rgba(91,184,176,0.12);
+  --badge-detection-text: #5bb8b0;
+  --badge-classify-bg: rgba(200,176,104,0.12);
+  --badge-classify-text: #c8b068;
+  --badge-segment-bg: rgba(166,142,200,0.12);
+  --badge-segment-text: #a68ec8;
+  --badge-keypoint-bg: rgba(200,160,88,0.12);
+  --badge-keypoint-text: #c8a058;
+  --badge-clip-bg: rgba(91,160,184,0.12);
+  --badge-clip-text: #5ba0b8;
+  --badge-pipeline-bg: rgba(184,120,168,0.12);
+  --badge-pipeline-text: #b878a8;
+  --badge-depth-bg: rgba(104,168,160,0.12);
+  --badge-depth-text: #68a8a0;
+  --badge-genai-bg: rgba(166,142,200,0.10);
+  --badge-genai-text: #a68ec8;
+
+  /* ── Motion ── */
+  --duration-instant: 80ms;
+  --duration-fast: 150ms;
+  --duration-base: 250ms;
+  --duration-slow: 400ms;
+  --ease-out: cubic-bezier(0.16,1,0.3,1);
+  --ease-emphasized: cubic-bezier(0.2,0,0,1);
+  --ease-spring: cubic-bezier(0.34,1.56,0.64,1);
+
+  /* ── Radius ── */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --radius-full: 9999px;
+
+  /* ── Spacing ── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* ── Typography ── */
+  --font-sans: 'Mi Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Menlo', monospace;
+  --text-xs: 0.6875rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.875rem;
+  --text-lg: 1rem;
+  --text-xl: 1.125rem;
+  --text-2xl: 1.25rem;
+
+  /* ── Shadows ── */
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.4);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.4);
+  --shadow-lg: 0 8px 32px rgba(0,0,0,0.5);
+}

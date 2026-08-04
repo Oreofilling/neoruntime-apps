@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GymOps - Pose Coaching and Safety Monitoring</title>
+<link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body data-exercise="{{ exercise }}">
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">G</span>
+    <div class="brand-text">
+      <h1>GymOps</h1>
+      <p>Pose coaching - zone occupancy - safety alerts</p>
+    </div>
+  </div>
+  <div class="topbar-stats" id="topbar-stats">
+    <span class="stat"><b id="stat-total">0</b><i>Present</i></span>
+    <span class="stat"><b id="stat-reps">0</b><i>Total Reps</i></span>
+    <span class="stat" title="Video = measured H.264 fps; Pose = measured pose-inference fps (overlay updates per second)."><b id="stat-fps">-</b><i>Video / Pose fps</i></span>
+    <span class="stat" title="NPU utilization, smoothed. Low % at preview rate is normal — pose inference does not saturate the NPU; see HW infer ms for activity."><b id="stat-npu">-</b><i>NPU util</i></span>
+  </div>
+  <div class="topbar-actions">
+    <button id="btn-hd" class="seg active" data-mode="hd">HD Live</button>
+    <button id="btn-mjpeg" class="seg" data-mode="sync">Sync WS</button>
+  </div>
+</header>
+
+<main class="grid">
+  <section class="video-panel">
+    <div class="video-wrap">
+      <video id="hd-video" autoplay muted playsinline></video>
+      <canvas id="pose-canvas"></canvas>
+      <img id="mjpeg-img" alt="" style="display:none">
+      <div class="video-empty" id="video-empty">Waiting for video stream...</div>
+      <div class="video-badges">
+        <span class="badge" id="badge-mode">HD</span>
+        <span class="badge ok" id="badge-health">—</span>
+      </div>
+    </div>
+    <div class="video-foot">
+      <label class="filepick">
+        <span>Upload Test Video</span>
+        <input type="file" id="video-file" accept="video/*" hidden>
+      </label>
+      <button id="btn-stop-video" class="ghost" disabled>Stop Playback</button>
+      <span class="hint" id="video-hint">Sync WS carries pose metadata while H.264 carries video</span>
+    </div>
+  </section>
+
+  <section class="persons-panel">
+    <h2>People</h2>
+    <div class="persons" id="persons"><p class="empty">No detections</p></div>
+  </section>
+
+  <section class="zones-panel">
+    <h2>Zone Occupancy</h2>
+    <div class="zones" id="zones"><p class="empty">No zones configured</p></div>
+  </section>
+
+  <section class="equip-panel">
+    <h2>Equipment Occupancy</h2>
+    <div class="equip" id="equip"><p class="empty">No equipment configured</p></div>
+  </section>
+
+  <section class="alerts-panel">
+    <h2>Alerts</h2>
+    <ul class="alerts" id="alerts"></ul>
+  </section>
+</main>
+
+<footer class="footer">
+  <span>GymOps v0.1 - Hailo-15H - yolov8s_pose</span>
+  <span id="conn-state">Connecting...</span>
+</footer>
+
+<script src="/static/js/app.js" defer></script>
+</body>
+</html>

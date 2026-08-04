@@ -1,0 +1,100 @@
+# AIPC Platform Application Manifest
+# Parking Lot Full Element Extraction
+
+apiVersion: v1
+kind: Application
+
+metadata:
+  id: parking_lot
+  name: Parking Lot Full Element Extraction
+  version: 1.0.0
+  description: "Parking-lot element extraction with vehicle attributes, depth anti-spoofing, and plate OCR."
+  author: AIPC Team
+  email: opensource@camthink.ai
+
+spec:
+  image: parking-lot:1.0.0
+
+  resources:
+    cpu: "200%"
+    memory: "2Gi"
+
+  permissions:
+    video:
+      - sub.raw
+
+    inference:
+      models:
+        - yolov5m_vehicles
+        - scdepthv3
+        - license_plate_det
+        - plate_recognition
+      max_qps: 25
+      max_concurrent: 4
+      allow_register_model: true
+
+    events:
+      publish:
+        - parking/vehicles
+        - parking/plates
+        - parking/alerts
+      subscribe:
+        - system/*
+
+    device:
+      light: false
+      ir_cut: false
+      ptz: false
+      lens: false
+
+    network:
+      mode: host
+
+  env:
+    - name: PARKING_CONFIG
+      value: "/data/aipc/etc/parking-lot.yaml"
+    - name: STREAM_ID
+      value: "sub"
+    - name: TARGET_FPS
+      value: "20"
+    - name: VEHICLE_MODEL
+      value: "yolov5m_vehicles"
+    - name: DEPTH_MODEL
+      value: "scdepthv3"
+    - name: PLATE_DET_MODEL
+      value: "license_plate_det"
+    - name: PLATE_REC_MODEL
+      value: "plate_recognition"
+    - name: DEPTH_SPOOF_THRESHOLD
+      value: "0.02"
+    - name: LOG_LEVEL
+      value: "info"
+    # HD 1080P MSE preview reuses platform-api's hardware H.264 stream
+    # (ws://<lan-ip>:<port>/api/v1/h264/main). Default 8080 = platform-api
+    # http_addr (configs/platform-api.yaml). Set HD_PREVIEW_ENABLED=0 to fall
+    # back to MJPEG. If platform-api enables token auth, inject PLATFORM_API_TOKEN
+    # at runtime (never commit a real token here).
+    - name: PLATFORM_API_PORT
+      value: "8080"
+    - name: HD_PREVIEW_ENABLED
+      value: "1"
+    - name: PLATFORM_API_TOKEN
+      value: "${AIPC_TOKEN_KEY}"
+
+  volumes:
+    - host: /data/aipc/models
+      container: /data/aipc/models
+      readonly: true
+    - host: /data/aipc/logs/parking_lot
+      container: /app/logs
+      readonly: false
+
+  autostart: false
+  restart_policy: on-failure
+  restart_max_retries: 3
+
+  healthcheck:
+    enabled: true
+    interval: 30s
+    timeout: 5s
+    retries: 3

@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Parallel Inference Benchmark</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #232733;
+    --border: #2d3140;
+    --text: #e4e7ef;
+    --text-dim: #8b91a5;
+    --accent: #6c72cb;
+    --accent2: #3ecf8e;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --serial: #ef4444;
+    --parallel: #3ecf8e;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    padding: 20px;
+    min-height: 100vh;
+  }
+  h1 {
+    font-size: 1.6rem;
+    font-weight: 600;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  h1 .dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--accent2);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .card h2 {
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    margin-bottom: 16px;
+  }
+  .full-width { grid-column: 1 / -1; }
+
+  /* Gauges */
+  .gauges {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 12px;
+  }
+  .gauge {
+    text-align: center;
+    padding: 12px 8px;
+    background: var(--surface2);
+    border-radius: 8px;
+  }
+  .gauge-ring {
+    position: relative;
+    width: 80px; height: 80px;
+    margin: 0 auto 8px;
+  }
+  .gauge-ring svg { transform: rotate(-90deg); }
+  .gauge-ring .value {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 1.1rem;
+    font-weight: 700;
+  }
+  .gauge .label {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+  }
+
+  /* Models */
+  .model-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .model-chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: all 0.15s;
+    user-select: none;
+  }
+  .model-chip:hover { border-color: var(--accent); }
+  .model-chip.selected {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  .model-chip input { display: none; }
+
+  /* Benchmark controls */
+  .controls {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 16px;
+  }
+  .btn {
+    padding: 8px 20px;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+  }
+  .btn-primary:hover { background: #5a62b5; }
+  .btn-primary:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .btn-danger {
+    background: var(--danger);
+    color: #fff;
+  }
+  .btn-danger:hover { background: #dc2626; }
+  .iter-input {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 8px 12px;
+    width: 100px;
+    font-size: 0.85rem;
+  }
+  .status-text {
+    font-size: 0.85rem;
+    color: var(--text-dim);
+    margin-left: auto;
+  }
+
+  /* Comparison bars */
+  .comparison {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+  .metric-group h3 {
+    font-size: 0.9rem;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .metric-group h3 .swatch {
+    width: 12px; height: 12px;
+    border-radius: 3px;
+  }
+  .bar-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+    font-size: 0.8rem;
+  }
+  .bar-label {
+    width: 80px;
+    text-align: right;
+    color: var(--text-dim);
+    flex-shrink: 0;
+  }
+  .bar-track {
+    flex: 1;
+    height: 24px;
+    background: var(--surface2);
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
+  }
+  .bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.5s ease;
+    min-width: 2px;
+  }
+  .bar-fill.serial { background: var(--serial); }
+  .bar-fill.parallel { background: var(--parallel); }
+  .bar-value {
+    width: 70px;
+    font-weight: 600;
+    font-size: 0.8rem;
+  }
+
+  /* Speedup badge */
+  .speedup {
+    text-align: center;
+    padding: 24px;
+    margin-top: 16px;
+    background: var(--surface2);
+    border-radius: 8px;
+  }
+  .speedup .number {
+    font-size: 3rem;
+    font-weight: 800;
+    color: var(--accent2);
+  }
+  .speedup .label {
+    font-size: 0.85rem;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+
+  /* Preview */
+  .preview-container {
+    position: relative;
+    background: #000;
+    border-radius: 8px;
+    overflow: hidden;
+    aspect-ratio: 4/3;
+  }
+  .preview-container img,
+  .preview-container video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+
+  /* History table */
+  .history-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+  }
+  .history-table th {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-dim);
+    font-weight: 500;
+  }
+  .history-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .history-table tr:last-child td { border-bottom: none; }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+  .badge-green { background: rgba(62,207,142,0.15); color: var(--accent2); }
+  .badge-red { background: rgba(239,68,68,0.15); color: var(--danger); }
+
+  @media (max-width: 900px) {
+    .grid { grid-template-columns: 1fr; }
+    .gauges { grid-template-columns: repeat(3, 1fr); }
+    .comparison { grid-template-columns: 1fr; }
+  }
+</style>
+<script>window.HD_PREVIEW = {{ hd_preview | tojson }};</script>
+</head>
+<body>
+
+<div style="max-width:1400px;margin:0 auto;">
+  <h1><span class="dot"></span> Parallel Inference Benchmark</h1>
+
+  <div class="grid">
+    <!-- Real-time Gauges -->
+    <div class="card full-width">
+      <h2>Real-time NPU / System Metrics</h2>
+      <div class="gauges">
+        <div class="gauge">
+          <div class="gauge-ring">
+            <svg viewBox="0 0 80 80"><circle cx="40" cy="40" r="35" fill="none" stroke="#2d3140" stroke-width="6"/><circle id="ring-npu" cx="40" cy="40" r="35" fill="none" stroke="#6c72cb" stroke-width="6" stroke-dasharray="220" stroke-dashoffset="220" stroke-linecap="round"/></svg>
+            <span class="value" id="val-npu">0%</span>
+          </div>
+          <div class="label">NPU Utilization</div>
+        </div>
+        <div class="gauge">
+          <div class="gauge-ring">
+            <svg viewBox="0 0 80 80"><circle cx="40" cy="40" r="35" fill="none" stroke="#2d3140" stroke-width="6"/><circle id="ring-cpu" cx="40" cy="40" r="35" fill="none" stroke="#f59e0b" stroke-width="6" stroke-dasharray="220" stroke-dashoffset="220" stroke-linecap="round"/></svg>
+            <span class="value" id="val-cpu">0%</span>
+          </div>
+          <div class="label">CPU Usage</div>
+        </div>
+        <div class="gauge">
+          <div class="gauge-ring">
+            <svg viewBox="0 0 80 80"><circle cx="40" cy="40" r="35" fill="none" stroke="#2d3140" stroke-width="6"/><circle id="ring-dsp" cx="40" cy="40" r="35" fill="none" stroke="#8b5cf6" stroke-width="6" stroke-dasharray="220" stroke-dashoffset="220" stroke-linecap="round"/></svg>
+            <span class="value" id="val-dsp">0%</span>
+          </div>
+          <div class="label">DSP Usage</div>
+        </div>
+        <div class="gauge">
+          <div class="gauge-ring">
+            <svg viewBox="0 0 80 80"><circle cx="40" cy="40" r="35" fill="none" stroke="#2d3140" stroke-width="6"/><circle id="ring-fps" cx="40" cy="40" r="35" fill="none" stroke="#3ecf8e" stroke-width="6" stroke-dasharray="220" stroke-dashoffset="220" stroke-linecap="round"/></svg>
+            <span class="value" id="val-fps">0</span>
+          </div>
+          <div class="label">Inferences/sec</div>
+        </div>
+        <div class="gauge">
+          <div class="gauge-ring">
+            <svg viewBox="0 0 80 80"><circle cx="40" cy="40" r="35" fill="none" stroke="#2d3140" stroke-width="6"/><circle id="ring-latency" cx="40" cy="40" r="35" fill="none" stroke="#ec4899" stroke-width="6" stroke-dasharray="220" stroke-dashoffset="220" stroke-linecap="round"/></svg>
+            <span class="value" id="val-latency">0ms</span>
+          </div>
+          <div class="label">Avg Latency</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Model Selector + Benchmark Controls -->
+    <div class="card">
+      <h2>Model Selection &amp; Benchmark</h2>
+      <div class="controls">
+        <input type="number" class="iter-input" id="iterations" value="50" min="10" max="500" title="Iterations per phase">
+        <button class="btn btn-primary" id="btn-start" onclick="startBenchmark()">Start Benchmark</button>
+        <button class="btn btn-danger" id="btn-stop" onclick="stopBenchmark()" style="display:none">Stop</button>
+        <span class="status-text" id="bench-status">Select models and start</span>
+      </div>
+      <div class="model-list" id="model-list">
+        <span style="color:var(--text-dim);font-size:0.85rem">Loading models...</span>
+      </div>
+    </div>
+
+    <!-- Camera Preview -->
+    <div class="card">
+      <h2>Camera Preview
+        <span id="hd-badge" style="display:none;font-size:0.7rem;background:var(--accent);color:#fff;padding:2px 8px;border-radius:10px;vertical-align:middle;margin-left:8px">HD</span>
+      </h2>
+      <div class="preview-container">
+        <video id="hd-video" autoplay muted playsinline style="display:none"></video>
+        <img alt="Camera stream" id="preview" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='640' height='360'><rect width='100%25' height='100%25' fill='%23111'/><text x='50%25' y='50%25' fill='%23555' font-family='sans-serif' font-size='14' text-anchor='middle' dominant-baseline='middle'>Enable HD for live preview</text></svg>">
+      </div>
+      <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+        <button class="btn btn-primary" id="btn-hd" onclick="enterHd()" style="font-size:0.8rem;padding:4px 12px">Enable HD</button>
+        <button class="btn" id="btn-sd" onclick="exitHd()" style="display:none;font-size:0.8rem;padding:4px 12px">SD Mode</button>
+        <span id="hd-status" style="color:var(--text-dim);font-size:0.8rem"></span>
+      </div>
+    </div>
+
+    <!-- Comparison Results -->
+    <div class="card full-width" id="comparison-card" style="display:none">
+      <h2>Serial vs Parallel Comparison</h2>
+      <div class="comparison">
+        <div class="metric-group">
+          <h3><span class="swatch" style="background:var(--serial)"></span> Serial Execution</h3>
+          <div class="bar-row">
+            <span class="bar-label">Total Time</span>
+            <div class="bar-track"><div class="bar-fill serial" id="bar-serial-time"></div></div>
+            <span class="bar-value" id="val-serial-time">-</span>
+          </div>
+          <div class="bar-row">
+            <span class="bar-label">Avg Latency</span>
+            <div class="bar-track"><div class="bar-fill serial" id="bar-serial-latency"></div></div>
+            <span class="bar-value" id="val-serial-latency">-</span>
+          </div>
+          <div class="bar-row">
+            <span class="bar-label">FPS</span>
+            <div class="bar-track"><div class="bar-fill serial" id="bar-serial-fps"></div></div>
+            <span class="bar-value" id="val-serial-fps">-</span>
+          </div>
+        </div>
+        <div class="metric-group">
+          <h3><span class="swatch" style="background:var(--parallel)"></span> Parallel Execution</h3>
+          <div class="bar-row">
+            <span class="bar-label">Total Time</span>
+            <div class="bar-track"><div class="bar-fill parallel" id="bar-parallel-time"></div></div>
+            <span class="bar-value" id="val-parallel-time">-</span>
+          </div>
+          <div class="bar-row">
+            <span class="bar-label">Avg Latency</span>
+            <div class="bar-track"><div class="bar-fill parallel" id="bar-parallel-latency"></div></div>
+            <span class="bar-value" id="val-parallel-latency">-</span>
+          </div>
+          <div class="bar-row">
+            <span class="bar-label">FPS</span>
+            <div class="bar-track"><div class="bar-fill parallel" id="bar-parallel-fps"></div></div>
+            <span class="bar-value" id="val-parallel-fps">-</span>
+          </div>
+        </div>
+      </div>
+      <div class="speedup">
+        <div class="number" id="speedup-number">-</div>
+        <div class="label">Throughput Speedup (Parallel / Serial)</div>
+      </div>
+      <!-- Dropped models + per-item batch failures for the latest run.
+           Hidden unless the result actually dropped a model or saw a
+           partial batch failure, so a clean run shows no warning. -->
+      <div id="dropped-warning" style="display:none;margin-top:12px;padding:10px 14px;border-radius:8px;background:rgba(255,159,28,0.12);border:1px solid rgba(255,159,28,0.5);color:var(--text)"></div>
+    </div>
+
+    <!-- Benchmark History -->
+    <div class="card full-width">
+      <h2>Benchmark History</h2>
+      <div style="overflow-x:auto">
+        <table class="history-table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Models</th>
+              <th>Iter</th>
+              <th>Serial Total</th>
+              <th>Parallel Total</th>
+              <th>Speedup</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="history-body">
+            <tr><td colspan="7" style="color:var(--text-dim)">No benchmarks run yet</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// --- Gauge helpers ---
+const CIRCUMFERENCE = 2 * Math.PI * 35;
+
+function setGauge(ringId, valId, value, maxVal, suffix) {
+  const pct = Math.min(100, (value / maxVal) * 100);
+  const offset = CIRCUMFERENCE - (pct / 100) * CIRCUMFERENCE;
+  document.getElementById(ringId).setAttribute('stroke-dashoffset', offset);
+  document.getElementById(valId).textContent =
+    suffix === '%' ? Math.round(value) + '%' :
+    suffix === 'ms' ? Math.round(value) + 'ms' :
+    Math.round(value);
+}
+
+// --- Stats SSE ---
+const evtSource = new EventSource('/api/stats/stream');
+evtSource.onmessage = (e) => {
+  const msg = JSON.parse(e.data);
+  if (msg.type === 'stats') {
+    updateGauges(msg.data);
+  } else if (msg.type === 'benchmark') {
+    updateBenchmarkProgress(msg.data);
+  }
+};
+
+function updateGauges(s) {
+  if (s.npu_utilization != null) setGauge('ring-npu', 'val-npu', s.npu_utilization, 100, '%');
+  if (s.cpu_utilization != null) setGauge('ring-cpu', 'val-cpu', s.cpu_utilization, 100, '%');
+  if (s.dsp_utilization != null) setGauge('ring-dsp', 'val-dsp', s.dsp_utilization, 100, '%');
+  if (s.fps != null) setGauge('ring-fps', 'val-fps', s.fps, 120, '');
+  if (s.avg_latency_ms != null) setGauge('ring-latency', 'val-latency', s.avg_latency_ms, 200, 'ms');
+}
+
+function updateBenchmarkProgress(b) {
+  const el = document.getElementById('bench-status');
+  if (b.state === 'running') {
+    el.textContent = b.phase + ': ' + b.progress + '/' + b.total;
+  } else if (b.state === 'completed') {
+    el.textContent = 'Complete — ' + b.iterations + ' iterations';
+    document.getElementById('btn-start').style.display = '';
+    document.getElementById('btn-stop').style.display = 'none';
+    loadResults();
+  } else if (b.state === 'stopped') {
+    el.textContent = 'Stopped';
+    document.getElementById('btn-start').style.display = '';
+    document.getElementById('btn-stop').style.display = 'none';
+    loadResults();
+  } else if (b.state === 'failed') {
+    el.textContent = 'Failed — ' + (b.last_error || 'see logs');
+    document.getElementById('btn-start').style.display = '';
+    document.getElementById('btn-stop').style.display = 'none';
+    loadResults();
+  } else if (b.state === 'idle') {
+    el.textContent = 'Select models and start';
+  }
+}
+
+// --- Model list ---
+async function loadModels() {
+  try {
+    const resp = await fetch('/api/models');
+    const models = await resp.json();
+    const el = document.getElementById('model-list');
+    if (!models.length) {
+      el.innerHTML = '<span style="color:var(--text-dim);font-size:0.85rem">No models loaded. Load models via platform API first.</span>';
+      return;
+    }
+    el.innerHTML = models.map(m =>
+      '<label class="model-chip" data-id="' + m.id + '">' +
+      '<input type="checkbox" value="' + m.id + '"> ' + m.id +
+      '</label>'
+    ).join('');
+    // Bind on the checkbox's own `change` event, not the label's `click`.
+    // Each chip is a <label> wrapping its <input>; clicking the label text
+    // forwards a click to the input AND fires the label's own click handler,
+    // so a click handler on the label runs twice and double-toggles, leaving
+    // the chip impossible to select. `change` fires exactly once per toggle.
+    el.querySelectorAll('.model-chip input').forEach(cb => {
+      cb.addEventListener('change', () => {
+        cb.closest('.model-chip').classList.toggle('selected', cb.checked);
+      });
+    });
+  } catch (e) {
+    console.error('Failed to load models:', e);
+  }
+}
+
+function getSelectedModels() {
+  return Array.from(document.querySelectorAll('.model-chip input:checked'))
+    .map(i => i.value);
+}
+
+// --- Benchmark ---
+async function startBenchmark() {
+  const models = getSelectedModels();
+  if (!models.length) { alert('Select at least one model'); return; }
+  const iterations = parseInt(document.getElementById('iterations').value) || 50;
+
+  document.getElementById('btn-start').style.display = 'none';
+  document.getElementById('btn-stop').style.display = '';
+  document.getElementById('comparison-card').style.display = 'none';
+
+  await fetch('/api/benchmark/start', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({models, iterations})
+  });
+}
+
+async function stopBenchmark() {
+  await fetch('/api/benchmark/stop', {method: 'POST'});
+  document.getElementById('btn-start').style.display = '';
+  document.getElementById('btn-stop').style.display = 'none';
+}
+
+// --- Results ---
+async function loadResults() {
+  try {
+    const resp = await fetch('/api/benchmark/results');
+    const results = await resp.json();
+    if (!results.length) return;
+
+    const latest = results[results.length - 1];
+    displayComparison(latest);
+    displayHistory(results);
+  } catch (e) {
+    console.error('Failed to load results:', e);
+  }
+}
+
+function displayComparison(r) {
+  document.getElementById('comparison-card').style.display = '';
+
+  const sTime = r.serial_total_ms;
+  const pTime = r.parallel_total_ms;
+  const sLat = r.serial_avg_latency_ms;
+  const pLat = r.parallel_avg_latency_ms;
+  const sFps = r.serial_fps;
+  const pFps = r.parallel_fps;
+
+  const maxTime = Math.max(sTime, pTime) * 1.1;
+  const maxLat = Math.max(sLat, pLat) * 1.1;
+  const maxFps = Math.max(sFps, pFps) * 1.1;
+
+  document.getElementById('bar-serial-time').style.width = (sTime / maxTime * 100) + '%';
+  document.getElementById('bar-parallel-time').style.width = (pTime / maxTime * 100) + '%';
+  document.getElementById('bar-serial-latency').style.width = (sLat / maxLat * 100) + '%';
+  document.getElementById('bar-parallel-latency').style.width = (pLat / maxLat * 100) + '%';
+  document.getElementById('bar-serial-fps').style.width = (sFps / maxFps * 100) + '%';
+  document.getElementById('bar-parallel-fps').style.width = (pFps / maxFps * 100) + '%';
+
+  document.getElementById('val-serial-time').textContent = Math.round(sTime) + 'ms';
+  document.getElementById('val-parallel-time').textContent = Math.round(pTime) + 'ms';
+  document.getElementById('val-serial-latency').textContent = sLat.toFixed(1) + 'ms';
+  document.getElementById('val-parallel-latency').textContent = pLat.toFixed(1) + 'ms';
+  document.getElementById('val-serial-fps').textContent = sFps.toFixed(1);
+  document.getElementById('val-parallel-fps').textContent = pFps.toFixed(1);
+
+  const speedup = r.throughput_speedup;
+  document.getElementById('speedup-number').textContent = speedup.toFixed(2) + 'x';
+
+  // Surface dropped models + per-item batch failures. Hidden on a clean run
+  // so the comparison view stays uncluttered when nothing went wrong.
+  const warn = document.getElementById('dropped-warning');
+  if (warn) {
+    const dropped = (r.dropped || []);
+    const failures = r.parallel_item_failures || 0;
+    if (dropped.length || failures) {
+      const parts = [];
+      if (dropped.length) {
+        parts.push('Dropped: ' + dropped.map(d => d.model_id + ' (' + d.error + ')').join(', '));
+      }
+      if (failures) {
+        parts.push(failures + ' parallel batch-item failure(s)');
+      }
+      warn.textContent = parts.join(' - ');
+      warn.style.display = '';
+    } else {
+      warn.style.display = 'none';
+    }
+  }
+}
+
+function displayHistory(results) {
+  const tbody = document.getElementById('history-body');
+  tbody.innerHTML = results.map(r => {
+    const t = new Date(r.timestamp * 1000).toLocaleTimeString();
+    const models = r.models.join(', ');
+    const badge = r.throughput_speedup >= 1.5 ? 'badge-green' : 'badge-red';
+    return '<tr>' +
+      '<td>' + t + '</td>' +
+      '<td>' + models + '</td>' +
+      '<td>' + r.iterations + '</td>' +
+      '<td>' + Math.round(r.serial_total_ms) + 'ms</td>' +
+      '<td>' + Math.round(r.parallel_total_ms) + 'ms</td>' +
+      '<td><span class="badge ' + badge + '">' + r.throughput_speedup.toFixed(2) + 'x</span></td>' +
+      '<td>' + r.status + '</td>' +
+      '</tr>';
+  }).reverse().join('');
+}
+
+// --- H.264 MSE Player (ported from model-showcase) ---
+
+// Minimal H264->fMP4 muxer for MSE. Platform broadcasts AVCC-format NALs
+// (4-byte length prefix), so each access unit is one mdat sample.
+(function () {
+  function w32(a, o, v) { a[o] = (v >>> 24) & 255; a[o + 1] = (v >>> 16) & 255; a[o + 2] = (v >>> 8) & 255; a[o + 3] = v & 255; }
+  function w16(a, o, v) { a[o] = (v >>> 8) & 255; a[o + 1] = v & 255; }
+  function wstr(a, o, s) { for (var i = 0; i < s.length; i++) a[o + i] = s.charCodeAt(i); }
+  function box(type) {
+    var n = 8; for (var i = 1; i < arguments.length; i++) n += arguments[i].length;
+    var r = new Uint8Array(n); w32(r, 0, n); wstr(r, 4, type);
+    var o = 8; for (var j = 1; j < arguments.length; j++) { r.set(arguments[j], o); o += arguments[j].length; }
+    return r;
+  }
+  function fullbox(t, ver, flags, c) {
+    var fc = new Uint8Array(4 + c.length); fc[0] = ver; fc[1] = (flags >>> 16) & 255; fc[2] = (flags >>> 8) & 255; fc[3] = flags & 255; fc.set(c, 4);
+    return box(t, fc);
+  }
+  function cat() {
+    var n = 0; for (var i = 0; i < arguments.length; i++) n += arguments[i].length;
+    var r = new Uint8Array(n); var o = 0; for (var k = 0; k < arguments.length; k++) { r.set(arguments[k], o); o += arguments[k].length; }
+    return r;
+  }
+  function avcC(sps, pps) {
+    var c = new Uint8Array(11 + sps.length + pps.length), i = 0;
+    c[i++] = 1; c[i++] = sps[1]; c[i++] = sps[2]; c[i++] = sps[3]; c[i++] = 0xff; c[i++] = 0xe1;
+    c[i++] = (sps.length >> 8) & 255; c[i++] = sps.length & 255; c.set(sps, i); i += sps.length;
+    c[i++] = 1; c[i++] = (pps.length >> 8) & 255; c[i++] = pps.length & 255; c.set(pps, i);
+    return box('avcC', c);
+  }
+  function avc1(sps, pps, w, h) {
+    var a = avcC(sps, pps); var c = new Uint8Array(78 + a.length);
+    w16(c, 6, 1); w16(c, 24, w); w16(c, 26, h); w32(c, 28, 0x00480000); w32(c, 32, 0x00480000); w16(c, 40, 1); w16(c, 74, 0x0018); w16(c, 76, 0xffff); c.set(a, 78);
+    return box('avc1', c);
+  }
+  function stbl(sps, pps, w, h) {
+    return box('stbl', fullbox('stsd', 0, 0, cat(new Uint8Array([0, 0, 0, 1]), avc1(sps, pps, w, h))),
+      fullbox('stts', 0, 0, new Uint8Array([0, 0, 0, 0])), fullbox('stsc', 0, 0, new Uint8Array([0, 0, 0, 0])),
+      fullbox('stsz', 0, 0, new Uint8Array(12)), fullbox('stco', 0, 0, new Uint8Array([0, 0, 0, 0])));
+  }
+  function minf(sps, pps, w, h) { return box('minf', fullbox('vmhd', 0, 1, new Uint8Array(8)), box('dinf', fullbox('dref', 0, 0, cat(new Uint8Array([0, 0, 0, 1]), fullbox('url ', 0, 1, new Uint8Array(0))))), stbl(sps, pps, w, h)); }
+  function mdia(sps, pps, w, h) {
+    var mdhd = new Uint8Array(20); w32(mdhd, 8, 90000); w16(mdhd, 16, 0x55c4);
+    var hdlr = new Uint8Array(21); wstr(hdlr, 4, 'vide');
+    return box('mdia', fullbox('mdhd', 0, 0, mdhd), fullbox('hdlr', 0, 0, hdlr), minf(sps, pps, w, h));
+  }
+  function tkhd(w, h) { var c = new Uint8Array(80); w32(c, 8, 1); w32(c, 36, 0x00010000); w32(c, 52, 0x00010000); w32(c, 68, 0x40000000); w32(c, 72, w << 16); w32(c, 76, h << 16); return fullbox('tkhd', 0, 3, c); }
+  function trak(sps, pps, w, h) { return box('trak', tkhd(w, h), mdia(sps, pps, w, h)); }
+  function mvhd() { var c = new Uint8Array(96); w32(c, 8, 90000); w32(c, 16, 0x00010000); w16(c, 20, 0x0100); w32(c, 32, 0x00010000); w32(c, 48, 0x00010000); w32(c, 64, 0x40000000); w32(c, 92, 2); return fullbox('mvhd', 0, 0, c); }
+  function mvex() { var c = new Uint8Array(20); w32(c, 0, 1); w32(c, 4, 1); return box('mvex', fullbox('trex', 0, 0, c)); }
+  function moov(sps, pps, w, h) { return box('moov', mvhd(), trak(sps, pps, w, h), mvex()); }
+  function ftyp() { var c = new Uint8Array(20); wstr(c, 0, 'isom'); w32(c, 4, 512); wstr(c, 8, 'isom'); wstr(c, 12, 'iso2'); wstr(c, 16, 'avc1'); return box('ftyp', c); }
+  function ssiz_safe(v) { return (v & 0x80000000) ? 0x7fffffff : v; }
+  function moof(seq, dur, kf, bdt, ssz, cto) {
+    var mfhdC = new Uint8Array(4); w32(mfhdC, 0, seq);
+    var tfhd = fullbox('tfhd', 0, 0x20000, new Uint8Array([0, 0, 0, 1]));
+    var tfdtC = new Uint8Array(4); w32(tfdtC, 0, bdt); var tfdt = fullbox('tfdt', 0, 0, tfdtC);
+    var trunc = new Uint8Array(24); w32(trunc, 0, 1); w32(trunc, 4, 108); w32(trunc, 8, dur); w32(trunc, 12, ssiz_safe(ssz)); w32(trunc, 16, kf ? 0x02000000 : 0x01010000); w32(trunc, 20, (cto < 0 ? (cto >>> 0) : cto));
+    var trun = fullbox('trun', 1, 0xF01, trunc);
+    return box('moof', fullbox('mfhd', 0, 0, mfhdC), box('traf', tfhd, tfdt, trun));
+  }
+  window.__H264Muxer = function () {
+    this.seq = 0; this.dur = 3000;     // 3000 ticks @90kHz = 33.3ms (30fps)
+    this.createInit = function (sps, pps, w, h) { return cat(ftyp(), moov(sps, pps, w || 1920, h || 1080)); };
+    this.createSeg = function (nal, kf, dt, cto) { this.seq++; return cat(moof(this.seq, this.dur, kf, dt, nal.length, cto || 0), box('mdat', nal)); };
+    this.setFps = function (f) { var nd = Math.round(90000 / f); if (Math.abs(nd - this.dur) > 100) this.dur = nd; };
+  };
+})();
+
+// Compact MSE player (ported from model-showcase)
+function createHdPlayer(video) {
+  var ws = null, ms = null, sb = null, muxer = null;
+  var sps = null, pps = null, initialized = false, hasFirstI = false;
+  var spsW = 1920, spsH = 1080;
+  var firstPts, lastPts, fps = 30, nextTs = 0;
+  var queue = [], url = '', active = false, destroyed = false;
+  var mseOpen = false, retryTimer = null, retryMs = 1000, mseErrs = 0, restartTimer = null;
+
+  function codecFromSps(s) { function h2(n) { return ('0' + n.toString(16)).slice(-2); } return 'avc1.' + h2(s[1]) + h2(s[2]) + h2(s[3]); }
+  function parseSpsRes(spsNal) {
+    try {
+      if (spsNal.length < 5) return { w: 1920, h: 1080 };
+      var bp = 0, tot = spsNal.length * 8;
+      function rb() { if (bp >= tot) return 0; var by = bp >> 3, bi = 7 - (bp & 7); bp++; return (spsNal[by] >> bi) & 1; }
+      function rbs(n) { var v = 0; for (var i = 0; i < n; i++) v = (v << 1) | rb(); return v; }
+      function rue() { var z = 0; while (rb() === 0 && z < 32) z++; return z > 0 ? ((1 << z) - 1 + rbs(z)) : 0; }
+      bp = 32; var prof = spsNal[1]; rue();
+      if ([100, 110, 122, 244, 44, 83, 86, 118, 128, 138, 139, 134].indexOf(prof) >= 0) {
+        var cf = rue(); if (cf === 3) rb(); rue(); rue(); rb();
+        if (rb()) { var lim = cf !== 3 ? 8 : 12; for (var i = 0; i < lim; i++) { if (rb()) { var sz = i < 6 ? 16 : 64, ls = 8, ns = 8; for (var j = 0; j < sz; j++) { if (ns !== 0) { var cd = rue(); var dl = (cd & 1) ? (cd + 1) >> 1 : -(cd >> 1); ns = (ls + dl + 256) % 256; } ls = ns === 0 ? ls : ns; } } } }
+      }
+      rue(); var poct = rue();
+      if (poct === 0) { rue(); } else if (poct === 1) { rb(); rue(); rue(); var cnt = rue(); for (var i = 0; i < cnt; i++) rue(); }
+      rue(); rb();
+      var pw = rue(), ph = rue(), fmo = rb();
+      return { w: (pw + 1) * 16, h: (2 - fmo) * (ph + 1) * 16 };
+    } catch (e) { return { w: 1920, h: 1080 }; }
+  }
+
+  function status(msg) {
+    var el = document.getElementById('hd-status');
+    if (el) el.textContent = msg;
+  }
+
+  function append(buf) {
+    if (!sb || destroyed) return;
+    if (sb.updating) { queue.push(buf); return; }
+    try { sb.appendBuffer(buf); } catch (e) { onMseError(); }
+  }
+  function onUpd() {
+    if (destroyed || !sb) return;
+    if (queue.length) { var b = queue.shift(); try { sb.appendBuffer(b); } catch (e) { onMseError(); } return; }
+    try {
+      if (video.buffered.length) {
+        var end = video.buffered.end(video.buffered.length - 1);
+        if (end - video.currentTime > 1.2) video.currentTime = end - 0.08;
+        if (sb.buffered.length && video.currentTime > sb.buffered.start(0) + 4) { sb.remove(0, video.currentTime - 3); return; }
+      }
+    } catch (e) {}
+  }
+  function onMseError() { if (destroyed || !active) return; mseErrs++; if (mseErrs > 5) return; scheduleRestart(); }
+  function scheduleRestart() {
+    if (restartTimer || destroyed || !active) return;
+    restartTimer = setTimeout(function () { restartTimer = null; if (active && !destroyed) { teardownMse(); openMse(); if (url) connectWs(url); } }, 800);
+  }
+  function resetDecoder() { initialized = false; muxer = null; hasFirstI = false; nextTs = 0; firstPts = undefined; lastPts = undefined; pps = null; queue = []; }
+  function teardownMse() {
+    try { if (sb) { sb.removeEventListener('updateend', onUpd); sb.removeEventListener('error', onMseError); if (ms && ms.readyState === 'open') { try { sb.abort(); } catch (e) {} } } } catch (e) {}
+    sb = null; resetDecoder(); sps = null; mseOpen = false;
+    try { if (ms) { ms.removeEventListener('sourceopen', onSourceOpen); if (ms.readyState === 'open') { try { ms.endOfStream(); } catch (e) {} } } } catch (e) {}
+    try { if (video.src) URL.revokeObjectURL(video.src); } catch (e) {}
+    video.src = ''; ms = null;
+  }
+  function openMse() { if (!window.MediaSource) return false; ms = new MediaSource(); video.src = URL.createObjectURL(ms); ms.addEventListener('sourceopen', onSourceOpen); return true; }
+  function onSourceOpen() { mseOpen = true; try { video.play(); } catch (e) {} }
+
+  function feedFrame(nal, kf, pts) {
+    if (firstPts === undefined) firstPts = pts;
+    if (lastPts !== undefined && pts > lastPts) { var d = pts - lastPts; if (d >= 1500 && d <= 18000) { var mf = Math.round(90000 / d); if (mf !== fps && mf >= 5 && mf <= 60) { fps = mf; if (muxer) muxer.setFps(mf); } } }
+    lastPts = pts;
+    if (!initialized) {
+      if (!sps || !pps) return;
+      var r = parseSpsRes(sps); spsW = r.w; spsH = r.h;
+      muxer = new window.__H264Muxer(); muxer.setFps(fps);
+      var init = muxer.createInit(sps, pps, spsW, spsH);
+      if (!mseOpen) openMse();
+      if (sb) append(init);
+      else { var tries = 0; var iv = setInterval(function () { if (mseOpen && sb) { clearInterval(iv); append(init); } if (++tries > 50) clearInterval(iv); }, 50); }
+      initialized = true;
+    }
+    if (!muxer || !sb) return;
+    var dt = nextTs; nextTs += muxer.dur;
+    var seg = muxer.createSeg(nal, kf, dt, 0);
+    append(seg);
+  }
+
+  function processMsg(raw) {
+    if (destroyed) return;
+    var dv = new DataView(raw);
+    if (raw.byteLength < 18) return;
+    if (dv.getUint32(0) !== 0xFFD8FF00) return;
+    var pts = dv.getUint32(6);
+    // Payload after the 18-byte header is AVCC (length-prefixed NAL units),
+    // NOT a single NAL: [4B big-endian len][NAL][4B len][NAL]... A live
+    // keyframe reads: offset 18 = 00 00 00 18 (len 24), offset 22 = 0x27
+    // (NAL type 7 = SPS). The old code treated offset 18 as a NAL header
+    // (read 0x00 -> type 0), so every frame was dropped, MSE never got an
+    // init segment, and the video stayed black. Walk the length prefixes,
+    // stash SPS/PPS, and feed the single VCL NAL (IDR=5 / P=1) per frame.
+    var off = 18;
+    var vclNal = null, vclKey = false;
+    while (off + 4 <= raw.byteLength) {
+      var len = dv.getUint32(off); off += 4;
+      if (len <= 0 || off + len > raw.byteLength) break;
+      var nal = new Uint8Array(raw, off, len); off += len;
+      var t = nal[0] & 0x1f;
+      if (t === 7) sps = nal;
+      else if (t === 8) pps = nal;
+      else if (t === 5) { hasFirstI = true; vclNal = nal; vclKey = true; }
+      else if (t === 1) { vclNal = nal; vclKey = false; }
+    }
+    if (vclNal && hasFirstI) feedFrame(vclNal, vclKey, pts);
+  }
+
+  function connectWs(u) {
+    if (destroyed) return;
+    try { ws = new WebSocket(u); } catch (e) { status('WS error'); return; }
+    ws.binaryType = 'arraybuffer';
+    status('Connecting...');
+    ws.onopen = function () { status('Playing'); retryMs = 1000; mseErrs = 0; };
+    ws.onmessage = function (e) { if (e.data instanceof ArrayBuffer) processMsg(e.data); };
+    ws.onclose = function () {
+      if (destroyed || !active) return;
+      status('Reconnecting (' + (retryMs / 1000).toFixed(1) + 's)...');
+      clearTimeout(retryTimer);
+      retryTimer = setTimeout(function () { if (active && !destroyed) { teardownMse(); openMse(); connectWs(u); } }, retryMs);
+      retryMs = Math.min(retryMs * 1.5, 10000);
+    };
+    ws.onerror = function () { status('Connection error'); try { ws.close(); } catch (e) {} };
+  }
+
+  return {
+    start: function () {
+      active = true; destroyed = false; url = window.HD_PREVIEW.wsUrl;
+      if (window.HD_PREVIEW.token) url += '?token=' + encodeURIComponent(window.HD_PREVIEW.token);
+      openMse(); connectWs(url);
+    },
+    stop: function () {
+      active = false; destroyed = true;
+      clearTimeout(retryTimer); clearTimeout(restartTimer);
+      try { if (ws) ws.close(); } catch (e) {}
+      teardownMse(); status('');
+    }
+  };
+}
+
+var _hdPlayer = null;
+
+function enterHd() {
+  if (!window.HD_PREVIEW || !window.HD_PREVIEW.enabled) return;
+  var video = document.getElementById('hd-video');
+  var img = document.getElementById('preview');
+  video.style.display = 'block';
+  img.style.display = 'none';
+  document.getElementById('btn-hd').style.display = 'none';
+  document.getElementById('btn-sd').style.display = '';
+  document.getElementById('hd-badge').style.display = '';
+  _hdPlayer = createHdPlayer(video);
+  _hdPlayer.start();
+}
+
+function exitHd() {
+  var video = document.getElementById('hd-video');
+  var img = document.getElementById('preview');
+  if (_hdPlayer) { _hdPlayer.stop(); _hdPlayer = null; }
+  video.style.display = 'none';
+  img.style.display = '';
+  document.getElementById('btn-hd').style.display = '';
+  document.getElementById('btn-sd').style.display = 'none';
+  document.getElementById('hd-badge').style.display = 'none';
+  document.getElementById('hd-status').textContent = '';
+}
+
+// --- Init ---
+loadModels();
+loadResults();
+// HD is the only working live preview (SD /stream was never implemented), so
+// auto-enable it on load instead of leaving a broken placeholder visible.
+if (window.HD_PREVIEW && window.HD_PREVIEW.enabled) {
+  enterHd();
+}
+setInterval(loadResults, 10000);
+</script>
+</body>
+</html>

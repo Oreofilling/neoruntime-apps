@@ -1,0 +1,338 @@
+{% extends "base.html" %}
+
+{% block title %}GenAI Chat - NE503 AI Showcase{% endblock %}
+
+{% block body %}
+<header class="app-header chat-header">
+  <a href="/" class="nav-link">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><polyline points="15 18 9 12 15 6"/></svg>Showcase
+  </a>
+  <div class="app-logo" style="font-size:var(--text-base)">GenAI Chat</div>
+  <select class="chat-model-select" id="model-select"><option value="">-- Select Model --</option></select>
+  <div class="chat-status" id="status">
+    <span id="status-dot" style="width:6px;height:6px;border-radius:50%;background:var(--text-muted);display:inline-block"></span>
+    <span id="status-text">disconnected</span>
+  </div>
+</header>
+
+<div style="position:relative;flex:1;display:flex;flex-direction:column;min-height:0">
+  <!-- GenAI model loading overlay -->
+  <div class="genai-loading-overlay" id="genai-loading">
+    <div class="genai-loading-content">
+      <div class="genai-loading-spinner"></div>
+      <div class="genai-loading-name" id="genai-loading-name">--</div>
+      <div class="genai-loading-step" id="genai-loading-step">Preparing...</div>
+      <div class="genai-loading-bar"><div class="genai-loading-bar-fill" id="genai-loading-fill"></div></div>
+    </div>
+  </div>
+  <div class="chat-container" id="chat">
+    <div class="chat-empty" id="chat-empty">
+      <div class="chat-empty-icon">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.19 235)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      </div>
+      <div class="chat-empty-title">NE503 GenAI</div>
+      <div class="chat-empty-desc">Select a model above to start an interactive chat session powered by on-device AI inference.</div>
+    </div>
+  </div>
+</div>
+
+<div class="chat-input-area">
+  <div class="chat-image-preview" id="image-preview" style="display:none">
+    <img id="preview-img" src="" alt="preview">
+    <button class="chat-image-remove" id="image-remove" title="Remove image">&times;</button>
+  </div>
+  <div style="display:flex;gap:var(--space-2);align-items:flex-end;width:100%">
+    <input type="file" id="image-input" accept="image/*" style="display:none">
+    <button class="chat-attach" id="attach" title="Attach image">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+    </button>
+    <textarea class="chat-input" id="input" rows="1" placeholder="Type a message..." autofocus></textarea>
+    <button class="chat-send" id="send" title="Send message">
+      <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+    </button>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+var chat = document.getElementById('chat');
+var chatEmpty = document.getElementById('chat-empty');
+var input = document.getElementById('input');
+var sendBtn = document.getElementById('send');
+var statusDot = document.getElementById('status-dot');
+var statusText = document.getElementById('status-text');
+var statusEl = document.getElementById('status');
+var modelSelect = document.getElementById('model-select');
+var generating = false;
+var connecting = false;
+var currentSession = null;
+var pendingImage = null;  // base64 data URL of attached image
+var attachBtn = document.getElementById('attach');
+var imageInput = document.getElementById('image-input');
+var imagePreview = document.getElementById('image-preview');
+var previewImg = document.getElementById('preview-img');
+var imageRemove = document.getElementById('image-remove');
+
+function setStatus(text, connected) {
+  statusText.textContent = text;
+  statusDot.style.background = connected ? 'oklch(0.65 0.20 155)' : 'var(--text-muted)';
+  statusDot.style.animation = connected ? 'pulse-dot 2s ease-in-out infinite' : 'none';
+  if (connected) statusEl.classList.add('connected');
+  else statusEl.classList.remove('connected');
+}
+
+function hideEmpty() {
+  if (chatEmpty) chatEmpty.style.display = 'none';
+}
+
+function addMsg(role, text, image) {
+  hideEmpty();
+  var div = document.createElement('div');
+  div.className = 'msg ' + role;
+  if (image) {
+    var img = document.createElement('img');
+    img.src = image;
+    img.style.maxWidth = '200px';
+    img.style.maxHeight = '160px';
+    img.style.borderRadius = 'var(--radius-sm)';
+    img.style.marginBottom = '6px';
+    div.appendChild(img);
+    var p = document.createElement('div');
+    p.textContent = text;
+    div.appendChild(p);
+  } else {
+    div.textContent = text;
+  }
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+  return div;
+}
+
+async function loadModels() {
+  var resp = await fetch('/api/models');
+  var data = await resp.json();
+  var genaiModels = data.models.filter(function(m) { return m.type === 'genai'; });
+  modelSelect.innerHTML = '<option value="">-- Select Model --</option>' +
+    genaiModels.map(function(m) { return '<option value="' + m.id + '">' + esc(m.name) + '</option>'; }).join('');
+  if (genaiModels.length === 0) {
+    var emptyDesc = document.querySelector('.chat-empty-desc');
+    if (emptyDesc) emptyDesc.textContent = 'No GenAI models are currently available on this device. Install a compatible model to start chatting.';
+  }
+}
+
+async function createSession(modelId) {
+  connecting = true;
+  input.disabled = true;
+  sendBtn.disabled = true;
+  modelSelect.disabled = true;
+
+  // Show loading overlay with animated steps
+  var modelName = modelSelect.options[modelSelect.selectedIndex].text || modelId;
+  var loadingEl = document.getElementById('genai-loading');
+  var loadingName = document.getElementById('genai-loading-name');
+  var loadingStep = document.getElementById('genai-loading-step');
+  var loadingFill = document.getElementById('genai-loading-fill');
+  loadingName.textContent = modelName;
+  loadingStep.textContent = 'Stopping active models...';
+  loadingFill.style.width = '5%';
+  loadingEl.classList.add('active');
+  setStatus('loading...', false);
+
+  var loadingMessages = [
+    'Stopping active models...',
+    'Unloading NPU models...',
+    'Loading model to NPU...',
+    'Allocating KV-Cache...',
+    'Initializing inference engine...',
+    'Preparing tokenizer...',
+    'Warming up model...',
+  ];
+  var msgIdx = 0;
+  var fakePct = 5;
+  var loadingInterval = setInterval(function() {
+    msgIdx = Math.min(msgIdx + 1, loadingMessages.length - 1);
+    loadingStep.textContent = loadingMessages[msgIdx];
+    // Decelerating progress: fast early, slow near 90%
+    var remaining = 88 - fakePct;
+    fakePct += Math.max(0.3, remaining * 0.03);
+    loadingFill.style.width = fakePct.toFixed(1) + '%';
+  }, 3000);
+
+  try {
+    var resp = await fetch('/api/genai/session', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({model_id: modelId}),
+    });
+    var data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Failed');
+    currentSession = data.session_id;
+
+    clearInterval(loadingInterval);
+    loadingFill.style.width = '100%';
+    loadingStep.textContent = 'Ready';
+    setTimeout(function() { loadingEl.classList.remove('active'); }, 400);
+
+    setStatus('connected', true);
+    addMsg('system', 'Session created. Start chatting!');
+  } catch (e) {
+    clearInterval(loadingInterval);
+    loadingEl.classList.remove('active');
+    setStatus('error', false);
+    statusDot.style.background = 'oklch(0.65 0.20 25)';
+    addMsg('error', 'Failed to create session: ' + e.message);
+  } finally {
+    connecting = false;
+    input.disabled = false;
+    sendBtn.disabled = false;
+    modelSelect.disabled = false;
+    input.focus();
+  }
+}
+
+function esc(s) {
+  var d = document.createElement('div');
+  d.appendChild(document.createTextNode(s));
+  return d.innerHTML;
+}
+
+async function sendMessage() {
+  var text = input.value.trim();
+  if ((!text && !pendingImage) || generating || connecting) return;
+  if (!currentSession) {
+    addMsg('error', 'Please select a GenAI model first.');
+    return;
+  }
+  input.value = '';
+  input.style.height = 'auto';
+  addMsg('user', text || '(image)', pendingImage);
+  var imageData = pendingImage;
+  pendingImage = null;
+  imagePreview.style.display = 'none';
+  generating = true;
+  sendBtn.disabled = true;
+
+  var assistantDiv = document.createElement('div');
+  assistantDiv.className = 'msg assistant typing-cursor';
+  chat.appendChild(assistantDiv);
+  chat.scrollTop = chat.scrollHeight;
+  var fullText = '';
+
+  try {
+    var resp = await fetch('/api/genai/stream', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        messages: [text || 'Describe this image'],
+        temperature: 0.3,
+        max_tokens: 512,
+        image: imageData || undefined,
+      }),
+    });
+    var reader = resp.body.getReader();
+    var decoder = new TextDecoder();
+    var buffer = '';
+
+    while (true) {
+      var result = await reader.read();
+      if (result.done) break;
+      buffer += decoder.decode(result.value, {stream: true});
+      var lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        if (!line.startsWith('data: ')) continue;
+        try {
+          var ev = JSON.parse(line.slice(6));
+          if (ev.token) {
+            if (ev.token === '<|im_end|>') continue;
+            fullText += ev.token;
+            assistantDiv.textContent = fullText;
+            chat.scrollTop = chat.scrollHeight;
+          } else if (ev.error) {
+            assistantDiv.textContent = fullText || '';
+            assistantDiv.classList.remove('typing-cursor');
+            addMsg('error', ev.error);
+          } else if (ev.done) {
+            break;
+          }
+        } catch(e) {}
+      }
+    }
+  } catch (e) {
+    addMsg('error', 'Stream error: ' + e.message);
+  }
+  assistantDiv.classList.remove('typing-cursor');
+  if (!fullText && !assistantDiv.textContent) {
+    assistantDiv.textContent = '(no response)';
+  }
+  generating = false;
+  sendBtn.disabled = false;
+  input.focus();
+}
+
+modelSelect.addEventListener('change', function() {
+  if (currentSession) {
+    addMsg('system', 'Switching model...');
+  }
+  chat.innerHTML = '';
+  chat.appendChild(chatEmpty);
+  chatEmpty.style.display = '';
+  currentSession = null;
+  var modelId = modelSelect.value;
+  if (modelId) createSession(modelId);
+});
+
+sendBtn.addEventListener('click', sendMessage);
+input.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+input.addEventListener('input', function() {
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+});
+
+attachBtn.addEventListener('click', function() { imageInput.click(); });
+imageInput.addEventListener('change', function() {
+  var file = imageInput.files[0];
+  if (!file) return;
+  // Resize large images before encoding
+  var img = new Image();
+  img.onload = function() {
+    var maxDim = 640;
+    var w = img.width, h = img.height;
+    if (w > maxDim || h > maxDim) {
+      var scale = maxDim / Math.max(w, h);
+      w = Math.round(w * scale);
+      h = Math.round(h * scale);
+    }
+    var canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+    pendingImage = canvas.toDataURL('image/jpeg', 0.8);
+    previewImg.src = pendingImage;
+    imagePreview.style.display = 'block';
+  };
+  img.src = URL.createObjectURL(file);
+  imageInput.value = '';
+});
+imageRemove.addEventListener('click', function() {
+  pendingImage = null;
+  imagePreview.style.display = 'none';
+});
+
+loadModels().then(function() {
+  var params = new URLSearchParams(window.location.search);
+  var m = params.get('model');
+  if (m) {
+    modelSelect.value = m;
+    modelSelect.dispatchEvent(new Event('change'));
+  }
+});
+</script>
+{% endblock %}

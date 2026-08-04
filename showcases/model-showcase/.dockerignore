@@ -1,0 +1,6 @@
+*.tar
+*.aipc
+.git
+__pycache__
+*.pyc
+build.sh

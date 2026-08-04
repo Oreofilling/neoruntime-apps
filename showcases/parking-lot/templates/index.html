@@ -1,0 +1,875 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Parking Lot Monitor</title>
+  <link rel="stylesheet" href="/static/css/design-tokens.css">
+  <link rel="stylesheet" href="/static/css/base.css">
+  <link rel="stylesheet" href="/static/css/layout.css">
+  <link rel="stylesheet" href="/static/css/components.css">
+  <link rel="stylesheet" href="/static/css/animations.css">
+  <!-- HD 1080P preview config: wsUrl of platform-api's hardware H.264 stream. -->
+  <script>window.HD_PREVIEW = {{ hd_preview | tojson }};</script>
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header">
+        <div class="header-title"><span>Parking</span> Lot Monitor</div>
+        <div class="header-status">
+          <div class="mode-switcher">
+            <button class="mode-btn active" id="btnLive" onclick="switchMode('live')">Live Stream</button>
+            <button class="mode-btn" id="btnUpload" onclick="document.getElementById('fileInput').click()">Upload Video</button>
+            <input type="file" id="fileInput" accept="video/*" style="display:none" onchange="uploadVideo(this)">
+          </div>
+          <span class="status-dot live" id="healthDot"></span>
+          <span id="healthText">Connecting...</span>
+          <span id="fpsDisplay">-- FPS</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="app-main">
+      <!-- Stream -->
+      <section class="stream-section">
+        <div class="stream-wrapper" id="stream-wrapper">
+          <!-- MJPEG preview: live fallback + the only source in upload mode.
+               In-flow so the aspect-ratio wrapper keeps its height when hidden. -->
+          <img id="stream" src="/stream" alt="Live Stream">
+          <!-- Client-side AI overlay for the MJPEG <img>: cv2 Hershey fonts are
+               ASCII-only so plates can't be burned in-frame; draw boxes/text here
+               from the normalized SSE bboxes instead. -->
+          <canvas id="overlay-canvas"
+            style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2"></canvas>
+
+          <!-- HD 1080P hardware preview (platform-api /api/v1/h264/main via MSE).
+               Decoded in-browser; zero Python CPU on the capture loop. Hidden
+               until HD is entered. -->
+          <video id="hd-video" autoplay muted playsinline
+            style="display:none;position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000;z-index:1"></video>
+          <!-- Client-side AI overlay for HD (same SSE data; backing store sized
+               to the video's intrinsic resolution on loadedmetadata). -->
+          <canvas id="hd-overlay-canvas"
+            style="display:none;position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2"></canvas>
+
+          <div class="stream-overlay-badge" id="streamBadges"></div>
+          <div class="stream-fps" id="streamFps">-- FPS</div>
+        </div>
+      </section>
+
+      <!-- Upload progress bar -->
+      <section class="upload-section" id="uploadSection" style="display:none">
+        <div class="upload-progress">
+          <div class="upload-info" id="uploadInfo">Processing video...</div>
+          <div class="progress-bar-track">
+            <div class="progress-bar-fill" id="progressBar" style="width:0%"></div>
+          </div>
+          <div class="upload-actions" id="uploadActions" style="display:none">
+            <span class="upload-summary" id="uploadSummary"></span>
+            <a class="btn-download" id="btnDownload" href="#" download>Download Result</a>
+            <button class="btn-reupload" onclick="document.getElementById('fileInput').click()">Re-upload</button>
+            <button class="btn-back-live" onclick="switchMode('live')">Back to Live</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Stats Row -->
+      <section class="stats-row">
+        <div class="stat-card">
+          <div class="stat-label">Vehicles</div>
+          <div class="stat-value vehicle" id="statVehicles">0</div>
+          <div class="stat-sub" id="statVehiclesSub">detected this frame</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Plates</div>
+          <div class="stat-value plate" id="statPlates">0</div>
+          <div class="stat-sub" id="statPlatesSub">recognized</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Alerts</div>
+          <div class="stat-value alert" id="statAlerts">0</div>
+          <div class="stat-sub">spoof detected</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Inference</div>
+          <div class="stat-value latency" id="statLatency">--</div>
+          <div class="stat-sub" id="statInferSub">ms per frame</div>
+        </div>
+      </section>
+
+      <!-- NPU Performance Section -->
+      <section class="npu-overview" id="npuSection">
+        <div class="npu-card">
+          <div class="npu-header">
+            <span class="npu-label">NPU Performance</span>
+            <span class="npu-badge" id="npuBadge">-- models</span>
+          </div>
+          <div class="npu-bar-track">
+            <div class="npu-bar-fill" id="npuBar" style="width: 0%"></div>
+          </div>
+          <div class="npu-stats-grid">
+            <div class="npu-stat">
+              <span class="npu-stat-label">NPU</span>
+              <span class="npu-stat-value npu-color" id="npuUtil">--%</span>
+            </div>
+            <div class="npu-stat">
+              <span class="npu-stat-label">CPU</span>
+              <span class="npu-stat-value cpu-color" id="cpuUtil">--%</span>
+            </div>
+            <div class="npu-stat">
+              <span class="npu-stat-label">RAM</span>
+              <span class="npu-stat-value ram-color" id="ramUtil">--</span>
+            </div>
+          </div>
+        </div>
+        <div class="model-list-card">
+          <div class="card-header">
+            <div class="card-title">Active Models</div>
+            <span class="badge badge-plate" id="modelCount">0</span>
+          </div>
+          <ul class="model-list" id="modelList">
+            <li class="npu-unavailable">Loading...</li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- Details Row -->
+      <section class="details-row">
+        <!-- Plate Gallery -->
+        <div class="card plate-gallery-card">
+          <div class="card-header">
+            <div class="card-title">License Plates</div>
+            <span class="badge badge-plate" id="plateCount">0</span>
+          </div>
+          <div class="plate-gallery" id="plateGallery">
+            <div class="empty-state">Waiting for plate detections...</div>
+          </div>
+        </div>
+
+        <!-- Alert History -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Alert History</div>
+            <span class="badge badge-alert" id="alertCount">0</span>
+          </div>
+          <ul class="alert-list" id="alertList">
+            <li class="empty-state">No alerts</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Toast container -->
+  <div id="toastContainer"></div>
+
+  <script>
+    const MAX_PLATES = 20;
+    const MAX_ALERTS = 50;
+
+    const plateGalleryEl = document.getElementById('plateGallery');
+    const alertListEl = document.getElementById('alertList');
+    const statVehiclesEl = document.getElementById('statVehicles');
+    const statPlatesEl = document.getElementById('statPlates');
+    const statAlertsEl = document.getElementById('statAlerts');
+    const statLatencyEl = document.getElementById('statLatency');
+    const statInferSubEl = document.getElementById('statInferSub');
+    const fpsDisplayEl = document.getElementById('fpsDisplay');
+    const streamFpsEl = document.getElementById('streamFps');
+    const healthDotEl = document.getElementById('healthDot');
+    const healthTextEl = document.getElementById('healthText');
+    const plateCountEl = document.getElementById('plateCount');
+    const alertCountEl = document.getElementById('alertCount');
+    const streamBadgesEl = document.getElementById('streamBadges');
+    const toastContainer = document.getElementById('toastContainer');
+    const npuBarEl = document.getElementById('npuBar');
+    const npuBadgeEl = document.getElementById('npuBadge');
+    const npuUtilEl = document.getElementById('npuUtil');
+    const cpuUtilEl = document.getElementById('cpuUtil');
+    const ramUtilEl = document.getElementById('ramUtil');
+    const modelCountEl = document.getElementById('modelCount');
+    const modelListEl = document.getElementById('modelList');
+
+    let plates = [];
+    let alerts = [];
+
+    function timeNow() {
+      return new Date().toLocaleTimeString('zh-CN', { hour12: false });
+    }
+
+    function updatePlates(newPlates) {
+      for (const p of newPlates) {
+        const existing = plates.find(x => x.plate === p.plate);
+        if (existing) {
+          existing.confidence = p.confidence;
+          existing.time = timeNow();
+          if (p.snapshot_id) existing.snapshot_id = p.snapshot_id;
+        } else {
+          plates.unshift({
+            plate: p.plate,
+            confidence: p.confidence,
+            time: timeNow(),
+            snapshot_id: p.snapshot_id || '',
+          });
+        }
+      }
+      plates = plates.slice(0, MAX_PLATES);
+      plateCountEl.textContent = plates.length;
+      renderPlateGallery();
+    }
+
+    function renderPlateGallery() {
+      if (plates.length === 0) {
+        plateGalleryEl.innerHTML = '<div class="empty-state">Waiting for plate detections...</div>';
+        return;
+      }
+      plateGalleryEl.innerHTML = plates.map(p => {
+        const imgHtml = p.snapshot_id
+          ? `<img class="plate-gallery-img" src="/api/plates/${p.snapshot_id}/image" alt="${esc(p.plate)}" loading="lazy">`
+          : `<div class="plate-gallery-img plate-gallery-placeholder">No image</div>`;
+        return `<div class="plate-gallery-item">
+          ${imgHtml}
+          <div class="plate-gallery-info">
+            <div class="plate-gallery-text">${esc(p.plate)}</div>
+            <div class="plate-gallery-meta">
+              <span>${(p.confidence * 100).toFixed(1)}%</span>
+              <span>${p.time}</span>
+            </div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+
+    function addAlert(alert) {
+      alerts.unshift({
+        type: alert.type || 'spoof_detected',
+        detail: alert.detail || '',
+        time: timeNow()
+      });
+      alerts = alerts.slice(0, MAX_ALERTS);
+      alertCountEl.textContent = alerts.length;
+      renderAlertList();
+      showToast(alert.detail || 'Spoof detected!');
+    }
+
+    function renderAlertList() {
+      if (alerts.length === 0) {
+        alertListEl.innerHTML = '<li class="empty-state">No alerts</li>';
+        return;
+      }
+      alertListEl.innerHTML = alerts.map(a =>
+        `<li class="alert-item">
+          <span class="alert-icon">&#9888;</span>
+          <div class="alert-content">
+            <span class="alert-type">${esc(a.type)}</span>
+            <span class="alert-detail">${esc(a.detail)}</span>
+          </div>
+          <span class="alert-time">${a.time}</span>
+        </li>`
+      ).join('');
+    }
+
+    function updateStreamBadges(data) {
+      const badges = [];
+      if (data.vehicles > 0) badges.push(`<span class="badge badge-vehicle">${data.vehicles} vehicles</span>`);
+      if (data.plates > 0) badges.push(`<span class="badge badge-plate">${data.plates} plates</span>`);
+      if (data.alerts > 0) badges.push(`<span class="badge badge-alert">${data.alerts} alerts</span>`);
+      streamBadgesEl.innerHTML = badges.join('');
+    }
+
+    function showToast(msg) {
+      const el = document.createElement('div');
+      el.className = 'toast alert';
+      el.textContent = msg;
+      toastContainer.appendChild(el);
+      setTimeout(() => el.remove(), 4000);
+    }
+
+    function esc(s) {
+      const d = document.createElement('div');
+      d.textContent = String(s);
+      return d.innerHTML;
+    }
+
+    function bump(el) {
+      el.style.animation = 'none';
+      el.offsetHeight;
+      el.style.animation = 'counter-bump 0.3s ease';
+    }
+
+    function updateNPU(platform) {
+      if (!platform) {
+        npuBarEl.style.width = '0%';
+        npuBarEl.className = 'npu-bar-fill';
+        npuUtilEl.textContent = 'N/A';
+        cpuUtilEl.textContent = 'N/A';
+        ramUtilEl.textContent = 'N/A';
+        npuBadgeEl.textContent = '-- models';
+        modelCountEl.textContent = '0';
+        modelListEl.innerHTML = '<li class="npu-unavailable">Platform stats unavailable</li>';
+        return;
+      }
+
+      const npuPct = (platform.npu_util * 100).toFixed(1);
+      npuBarEl.style.width = npuPct + '%';
+      npuBarEl.className = 'npu-bar-fill' +
+        (platform.npu_util >= 0.8 ? ' high' : platform.npu_util >= 0.5 ? ' warn' : '');
+      npuUtilEl.textContent = npuPct + '%';
+      cpuUtilEl.textContent = (platform.cpu_util * 100).toFixed(0) + '%';
+      ramUtilEl.textContent = platform.ram_used_mb + '/' + platform.ram_total_mb + ' MB';
+
+      const models = platform.models || [];
+      npuBadgeEl.textContent = models.length + ' models';
+      modelCountEl.textContent = models.length;
+
+      if (models.length === 0) {
+        modelListEl.innerHTML = '<li class="npu-unavailable">No models loaded</li>';
+        return;
+      }
+
+      modelListEl.innerHTML = models.map(m => {
+        const qps = m.qps != null ? m.qps.toFixed(1) + ' qps' : '--';
+        const lat = m.latency_ms != null ? m.latency_ms.toFixed(0) + ' ms' : '--';
+        return `<li class="model-item">
+          <span class="model-status-dot"></span>
+          <span class="model-id">${esc(m.id)}</span>
+          <span class="model-qps">${qps}</span>
+          <span class="model-latency">${lat}</span>
+        </li>`;
+      }).join('');
+    }
+
+    // ── HD 1080P MSE preview + client-side canvas overlay ──────────────
+    // Ported from apps/model-showcase/templates/index.html. The browser decodes
+    // platform-api's hardware H.264 stream (ws://<host>:<port>/api/v1/h264/main)
+    // via MSE, so 1080p preview costs zero Python CPU (no per-frame cv2.imencode
+    // on the ARM capture loop). Detection boxes + plate text are drawn on a
+    // <canvas> from the normalized SSE bboxes — cv2 Hershey fonts are ASCII-only
+    // (can't render CJK plates in-frame), but canvas fillText renders CJK natively.
+    const streamWrapper = document.getElementById('stream-wrapper');
+    const streamImg = document.getElementById('stream');
+    const overlayCanvas = document.getElementById('overlay-canvas');
+    const overlayCtx = overlayCanvas.getContext('2d');
+    const hdVideo = document.getElementById('hd-video');
+    const hdOverlayCanvas = document.getElementById('hd-overlay-canvas');
+    const hdOverlayCtx = hdOverlayCanvas.getContext('2d');
+    const hdPreviewConfig = window.HD_PREVIEW || { enabled: false };
+    let hdActive = false;        // MSE player currently running
+    let latestDetection = null;  // most recent SSE payload, redrawn on resize
+
+    // ── minimal H264→fMP4 muxer (ported from web/.../MSE/utils/h264ToMp4.ts) ──
+    // Produces init (ftyp+moov) + media (moof+mdat) segments for MSE. The platform
+    // already broadcasts AVCC-format NALs (4-byte length prefix), so each access
+    // unit is fed as one mdat sample — no Annex-B conversion needed.
+    (function () {
+      function w32(a, o, v) { a[o] = (v >>> 24) & 255; a[o + 1] = (v >>> 16) & 255; a[o + 2] = (v >>> 8) & 255; a[o + 3] = v & 255; }
+      function w16(a, o, v) { a[o] = (v >>> 8) & 255; a[o + 1] = v & 255; }
+      function wstr(a, o, s) { for (var i = 0; i < s.length; i++) a[o + i] = s.charCodeAt(i); }
+      function box(type) {
+        var n = 8; for (var i = 1; i < arguments.length; i++) n += arguments[i].length;
+        var r = new Uint8Array(n); w32(r, 0, n); wstr(r, 4, type);
+        var o = 8; for (var j = 1; j < arguments.length; j++) { r.set(arguments[j], o); o += arguments[j].length; }
+        return r;
+      }
+      function fullbox(t, ver, flags, c) {
+        var fc = new Uint8Array(4 + c.length); fc[0] = ver; fc[1] = (flags >>> 16) & 255; fc[2] = (flags >>> 8) & 255; fc[3] = flags & 255; fc.set(c, 4);
+        return box(t, fc);
+      }
+      function cat() {
+        var n = 0; for (var i = 0; i < arguments.length; i++) n += arguments[i].length;
+        var r = new Uint8Array(n); var o = 0; for (var k = 0; k < arguments.length; k++) { r.set(arguments[k], o); o += arguments[k].length; }
+        return r;
+      }
+      function avcC(sps, pps) {
+        var c = new Uint8Array(11 + sps.length + pps.length), i = 0;
+        c[i++] = 1; c[i++] = sps[1]; c[i++] = sps[2]; c[i++] = sps[3]; c[i++] = 0xff; c[i++] = 0xe1;
+        c[i++] = (sps.length >> 8) & 255; c[i++] = sps.length & 255; c.set(sps, i); i += sps.length;
+        c[i++] = 1; c[i++] = (pps.length >> 8) & 255; c[i++] = pps.length & 255; c.set(pps, i);
+        return box('avcC', c);
+      }
+      function avc1(sps, pps, w, h) {
+        var a = avcC(sps, pps); var c = new Uint8Array(78 + a.length);
+        w16(c, 6, 1); w16(c, 24, w); w16(c, 26, h); w32(c, 28, 0x00480000); w32(c, 32, 0x00480000); w16(c, 40, 1); w16(c, 74, 0x0018); w16(c, 76, 0xffff); c.set(a, 78);
+        return box('avc1', c);
+      }
+      function stbl(sps, pps, w, h) {
+        return box('stbl', fullbox('stsd', 0, 0, cat(new Uint8Array([0, 0, 0, 1]), avc1(sps, pps, w, h))),
+          fullbox('stts', 0, 0, new Uint8Array([0, 0, 0, 0])), fullbox('stsc', 0, 0, new Uint8Array([0, 0, 0, 0])),
+          fullbox('stsz', 0, 0, new Uint8Array(12)), fullbox('stco', 0, 0, new Uint8Array([0, 0, 0, 0])));
+      }
+      function minf(sps, pps, w, h) { return box('minf', fullbox('vmhd', 0, 1, new Uint8Array(8)), box('dinf', fullbox('dref', 0, 0, cat(new Uint8Array([0, 0, 0, 1]), fullbox('url ', 0, 1, new Uint8Array(0))))), stbl(sps, pps, w, h)); }
+      function mdia(sps, pps, w, h) {
+        var mdhd = new Uint8Array(20); w32(mdhd, 8, 90000); w16(mdhd, 16, 0x55c4);
+        var hdlr = new Uint8Array(21); wstr(hdlr, 4, 'vide');
+        return box('mdia', fullbox('mdhd', 0, 0, mdhd), fullbox('hdlr', 0, 0, hdlr), minf(sps, pps, w, h));
+      }
+      function tkhd(w, h) { var c = new Uint8Array(80); w32(c, 8, 1); w32(c, 36, 0x00010000); w32(c, 52, 0x00010000); w32(c, 68, 0x40000000); w32(c, 72, w << 16); w32(c, 76, h << 16); return fullbox('tkhd', 0, 3, c); }
+      function trak(sps, pps, w, h) { return box('trak', tkhd(w, h), mdia(sps, pps, w, h)); }
+      function mvhd() { var c = new Uint8Array(96); w32(c, 8, 90000); w32(c, 16, 0x00010000); w16(c, 20, 0x0100); w32(c, 32, 0x00010000); w32(c, 48, 0x00010000); w32(c, 64, 0x40000000); w32(c, 92, 2); return fullbox('mvhd', 0, 0, c); }
+      function mvex() { var c = new Uint8Array(20); w32(c, 0, 1); w32(c, 4, 1); return box('mvex', fullbox('trex', 0, 0, c)); }
+      function moov(sps, pps, w, h) { return box('moov', mvhd(), trak(sps, pps, w, h), mvex()); }
+      function ftyp() { var c = new Uint8Array(20); wstr(c, 0, 'isom'); w32(c, 4, 512); wstr(c, 8, 'isom'); wstr(c, 12, 'iso2'); wstr(c, 16, 'avc1'); return box('ftyp', c); }
+      function moof(seq, dur, kf, bdt, ssz, cto) {
+        var mfhdC = new Uint8Array(4); w32(mfhdC, 0, seq);
+        var tfhd = fullbox('tfhd', 0, 0x20000, new Uint8Array([0, 0, 0, 1]));
+        var tfdtC = new Uint8Array(4); w32(tfdtC, 0, bdt); var tfdt = fullbox('tfdt', 0, 0, tfdtC);
+        var trunc = new Uint8Array(24); w32(trunc, 0, 1); w32(trunc, 4, 108); w32(trunc, 8, dur); w32(trunc, 12, ssiz_safe(ssz)); w32(trunc, 16, kf ? 0x02000000 : 0x01010000); w32(trunc, 20, (cto < 0 ? (cto >>> 0) : cto));
+        var trun = fullbox('trun', 1, 0xF01, trunc);
+        return box('moof', fullbox('mfhd', 0, 0, mfhdC), box('traf', tfhd, tfdt, trun));
+      }
+      function ssiz_safe(n) { return n > 0 ? n : 0; }
+      window.__H264Muxer = function () {
+        this.seq = 0; this.dur = 3000;     // 3000 ticks @90kHz ≈ 33.3ms (30fps)
+        this.createInit = function (sps, pps, w, h) { return cat(ftyp(), moov(sps, pps, w || 1920, h || 1080)); };
+        this.createSeg = function (nal, kf, dt, cto) { this.seq++; return cat(moof(this.seq, this.dur, kf, dt, nal.length, cto || 0), box('mdat', nal)); };
+        this.setFps = function (f) { var nd = Math.round(90000 / f); if (Math.abs(nd - this.dur) > 100) this.dur = nd; };
+      };
+    })();
+
+    // ── compact MSE player (ported from web/.../MSE/msePlayer.ts) ──
+    // Wire format per WS message: 18-byte FrameHeaderV2 (magic 0xFFD8FF00,
+    // frameType, flags[bit0=hasDts], PTS@90kHz, DTS@90kHz, reserved) + AVCC NALs.
+    // On connect the platform first sends cached SPS/PPS, each in its own frame.
+    function createHdPlayer(video) {
+      var ws = null, ms = null, sb = null, muxer = null;
+      var sps = null, pps = null, initialized = false, hasFirstI = false;
+      var spsW = 1920, spsH = 1080;
+      var firstPts, lastPts, fps = 30, nextTs = 0;
+      var queue = [], url = '', active = false, destroyed = false;
+      var mseOpen = false, retryTimer = null, mseErrs = 0, restartTimer = null;
+
+      function eqArr(a, b) { if (!a || !b || a.length !== b.length) return false; for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false; return true; }
+      function codecFromSps(s) { function h2(n) { return ('0' + n.toString(16)).slice(-2); } return 'avc1.' + h2(s[1]) + h2(s[2]) + h2(s[3]); }
+      // Exp-Golomb SPS width/height parse (fallback 1920x1080).
+      function parseSpsRes(spsNal) {
+        try {
+          if (spsNal.length < 5) return { w: 1920, h: 1080 };
+          var bp = 0, tot = spsNal.length * 8;
+          function rb() { if (bp >= tot) return 0; var by = bp >> 3, bi = 7 - (bp & 7); bp++; return (spsNal[by] >> bi) & 1; }
+          function rbs(n) { var v = 0; for (var i = 0; i < n; i++) v = (v << 1) | rb(); return v; }
+          function rue() { var z = 0; while (rb() === 0 && z < 32) z++; return z > 0 ? ((1 << z) - 1 + rbs(z)) : 0; }
+          bp = 32; var prof = spsNal[1]; rue();
+          if ([100, 110, 122, 244, 44, 83, 86, 118, 128, 138, 139, 134].indexOf(prof) >= 0) {
+            var cf = rue(); if (cf === 3) rb(); rue(); rue(); rb();
+            if (rb()) { var lim = cf !== 3 ? 8 : 12; for (var i = 0; i < lim; i++) { if (rb()) { var sz = i < 6 ? 16 : 64, ls = 8, ns = 8; for (var j = 0; j < sz; j++) { if (ns !== 0) { var cd = rue(); var dl = (cd & 1) ? (cd + 1) >> 1 : -(cd >> 1); ns = (ls + dl + 256) % 256; } ls = ns === 0 ? ls : ns; } } } }
+          }
+          rue(); var poct = rue();
+          if (poct === 0) { rue(); } else if (poct === 1) { rb(); rue(); rue(); var cnt = rue(); for (var i = 0; i < cnt; i++) rue(); }
+          rue(); rb();
+          var pw = rue(), ph = rue(), fmo = rb();
+          return { w: (pw + 1) * 16, h: (2 - fmo) * (ph + 1) * 16 };
+        } catch (e) { return { w: 1920, h: 1080 }; }
+      }
+
+      function append(buf) {
+        if (!sb || destroyed) return;
+        if (sb.updating) { queue.push(buf); return; }
+        try { sb.appendBuffer(buf); } catch (e) { onMseError(); }
+      }
+      // Drain queue on each updateend, chase the live edge, and trim old buffer so
+      // latency stays bounded (matches web console's low-latency strategy).
+      function onUpd() {
+        if (destroyed || !sb) return;
+        if (queue.length) { var b = queue.shift(); try { sb.appendBuffer(b); } catch (e) { onMseError(); } return; }
+        try {
+          if (video.buffered.length) {
+            var end = video.buffered.end(video.buffered.length - 1);
+            if (end - video.currentTime > 1.2) video.currentTime = end - 0.08;
+            if (sb.buffered.length && video.currentTime > sb.buffered.start(0) + 4) { sb.remove(0, video.currentTime - 3); return; }
+          }
+        } catch (e) {}
+      }
+      function onMseError() { if (destroyed || !active) return; mseErrs++; if (mseErrs > 5) return; scheduleRestart(); }
+      function scheduleRestart() {
+        if (restartTimer || destroyed || !active) return;
+        restartTimer = setTimeout(function () { restartTimer = null; if (active && !destroyed) { teardownMse(); openMse(); if (url) connectWs(url); } }, 800);
+      }
+      function resetDecoder() { initialized = false; muxer = null; hasFirstI = false; nextTs = 0; firstPts = undefined; lastPts = undefined; pps = null; queue = []; }
+      function teardownMse() {
+        try { if (sb) { sb.removeEventListener('updateend', onUpd); sb.removeEventListener('error', onMseError); if (ms && ms.readyState === 'open') { try { sb.abort(); } catch (e) {} } } } catch (e) {}
+        sb = null; resetDecoder(); sps = null; mseOpen = false;
+        try { if (ms) { ms.removeEventListener('sourceopen', onSourceOpen); if (ms.readyState === 'open') { try { ms.endOfStream(); } catch (e) {} } } } catch (e) {}
+        try { if (video.src) URL.revokeObjectURL(video.src); } catch (e) {}
+        video.src = ''; ms = null;
+      }
+      function openMse() { if (!window.MediaSource) return false; ms = new MediaSource(); video.src = URL.createObjectURL(ms); ms.addEventListener('sourceopen', onSourceOpen); return true; }
+      function onSourceOpen() { mseOpen = true; try { video.play(); } catch (e) {} }
+
+      function feedFrame(nal, kf, pts) {
+        if (firstPts === undefined) firstPts = pts;
+        if (lastPts !== undefined && pts > lastPts) { var d = pts - lastPts; if (d >= 1500 && d <= 18000) { var mf = Math.round(90000 / d); if (mf !== fps && mf >= 5 && mf <= 60) { fps = mf; if (muxer) muxer.setFps(mf); } } }
+        lastPts = pts;
+        var dt = nextTs; nextTs += Math.round(90000 / fps);
+        var relPts = (pts - firstPts) | 0;
+        var cto = relPts - dt;
+        append(muxer.createSeg(nal, kf, dt, cto).buffer);
+      }
+
+      function handleMsg(buf) {
+        if (destroyed) return;
+        var dv = new DataView(buf), data, kf = false, pts = 0;
+        if (buf.byteLength >= 10 && dv.getUint32(0, false) === 0xFFD8FF00) {
+          // Keyframe is derived from the NAL type (IDR=5) below; the header
+          // FrameType byte is not an I/P-frame flag on this platform's stream.
+          var flags = dv.getUint8(5), hasDts = (flags & 0x01) !== 0;
+          pts = dv.getUint32(6, false);
+          data = (buf.byteLength >= 18 && hasDts) ? new Uint8Array(buf, 18) : new Uint8Array(buf, 10);
+        } else { data = new Uint8Array(buf); }
+
+        var off = 0, chunks = [], sawVCL = false;
+        while (off + 4 <= data.length) {
+          var len = ((data[off] << 24) | (data[off + 1] << 16) | (data[off + 2] << 8) | (data[off + 3])) >>> 0;
+          if (len === 0 || len > data.length - off - 4) break;
+          var nal = data.subarray(off + 4, off + 4 + len);
+          var nt = nal.length ? (nal[0] & 0x1f) : 0;
+          if (nt === 7) {
+            if (!eqArr(sps, nal)) { if (initialized) { scheduleRestart(); off += 4 + len; continue; } resetDecoder(); }
+            sps = nal.slice(); var r = parseSpsRes(sps); spsW = r.w; spsH = r.h;
+          } else if (nt === 8) {
+            pps = nal.slice();
+          } else if (nt !== 6 && nt !== 9) {
+            kf = kf || (nt === 5);
+            if (initialized && muxer) {
+              if (!hasFirstI) { if (kf) { hasFirstI = true; } else { off += 4 + len; continue; } }
+              var av = new Uint8Array(4 + nal.length); av[0] = (nal.length >>> 24) & 255; av[1] = (nal.length >>> 16) & 255; av[2] = (nal.length >>> 8) & 255; av[3] = nal.length & 255; av.set(nal, 4);
+              chunks.push(av); sawVCL = true;
+            }
+          }
+          off += 4 + len;
+        }
+
+        if (!initialized && sps && pps && mseOpen) {
+          try {
+            muxer = new window.__H264Muxer(); muxer.setFps(fps);
+            var codec = codecFromSps(sps);
+            if (!MediaSource.isTypeSupported('video/mp4; codecs="' + codec + '"')) { onMseError(); return; }
+            sb = ms.addSourceBuffer('video/mp4; codecs="' + codec + '"');
+            sb.mode = 'segments';
+            sb.addEventListener('updateend', onUpd);
+            sb.addEventListener('error', onMseError);
+            initialized = true; mseErrs = 0;
+            append(muxer.createInit(sps, pps, spsW, spsH).buffer);
+          } catch (e) { onMseError(); }
+        }
+
+        if (sawVCL && chunks.length && muxer) {
+          var tot = 0; for (var i = 0; i < chunks.length; i++) tot += chunks[i].length;
+          var merged = new Uint8Array(tot), o = 0; for (var i = 0; i < chunks.length; i++) { merged.set(chunks[i], o); o += chunks[i].length; }
+          feedFrame(merged, kf, pts);
+        }
+      }
+
+      function connectWs(u) {
+        try { ws = new WebSocket(u); } catch (e) { scheduleRestart(); return; }
+        ws.binaryType = 'arraybuffer';
+        ws.onmessage = function (ev) { handleMsg(ev.data); };
+        ws.onopen = function () { mseErrs = 0; };
+        ws.onclose = function () { if (active && !destroyed) { retryTimer = setTimeout(function () { retryTimer = null; if (active && !destroyed && url) connectWs(url); }, 1200); } };
+        ws.onerror = function () { try { ws.close(); } catch (e) {} };
+      }
+
+      return {
+        start: function (u) { url = u; active = true; destroyed = false; mseErrs = 0; resetDecoder(); sps = null; pps = null; openMse(); connectWs(u); },
+        stop: function () {
+          active = false;
+          if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+          if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
+          if (ws) { ws.onclose = null; ws.onerror = null; ws.onmessage = null; try { ws.close(); } catch (e) {} ws = null; }
+          teardownMse();
+        }
+      };
+    }
+
+    const hdPlayer = createHdPlayer(hdVideo);
+
+    // Draw vehicle/plate boxes + plate text. bboxes are normalized [x,y,w,h]
+    // fractions of the inferred frame, so they map to any preview resolution.
+    function drawBoxes(ctx, canvas, data) {
+      if (!ctx || !canvas || !canvas.width || !canvas.height) return;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (!data) return;
+      const W = canvas.width, H = canvas.height;
+      const lw = Math.max(2, Math.round(W / 480));
+      const fs = Math.max(12, Math.round(W / 60));
+      ctx.lineWidth = lw;
+      (data.vehicles || []).forEach(v => {
+        if (!v.bbox) return;
+        const bx = v.bbox[0] * W, by = v.bbox[1] * H, bw = v.bbox[2] * W, bh = v.bbox[3] * H;
+        ctx.strokeStyle = v.spoof ? '#ff3b3b' : '#00e5ff';
+        ctx.strokeRect(bx, by, bw, bh);
+        drawLabel(ctx, (v.class || 'vehicle') + ' ' + Math.round((v.conf || 0) * 100) + '%', bx, by, ctx.strokeStyle, fs);
+      });
+      (data.plates || []).forEach(p => {
+        if (!p.bbox) return;
+        const bx = p.bbox[0] * W, by = p.bbox[1] * H, bw = p.bbox[2] * W, bh = p.bbox[3] * H;
+        ctx.strokeStyle = '#ffb84d';
+        ctx.strokeRect(bx, by, bw, bh);
+        if (p.plate) drawLabel(ctx, p.plate, bx, by + bh, ctx.strokeStyle, fs);
+      });
+    }
+    function drawLabel(ctx, text, x, y, color, fs) {
+      ctx.font = fs + 'px monospace';
+      const tw = ctx.measureText(text).width;
+      const above = y - fs - 4 >= 0;
+      const ty = above ? y - fs - 4 : y + 4;
+      ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      ctx.fillRect(x, ty, tw + 8, fs + 4);
+      ctx.fillStyle = color;
+      ctx.textBaseline = 'top';
+      ctx.fillText(text, x + 4, ty + 2);
+    }
+    function redrawOverlay() {
+      if (hdActive) drawBoxes(hdOverlayCtx, hdOverlayCanvas, latestDetection);
+      else drawBoxes(overlayCtx, overlayCanvas, latestDetection);
+    }
+    // MJPEG overlay backing store = displayed <img> box; HD overlay = video
+    // intrinsic resolution (set on loadedmetadata). Both feed redrawOverlay.
+    function sizeCanvases() {
+      const w = streamImg.clientWidth || streamWrapper.clientWidth || 640;
+      const h = streamImg.clientHeight || streamWrapper.clientHeight || 360;
+      if (overlayCanvas.width !== w || overlayCanvas.height !== h) {
+        overlayCanvas.width = w; overlayCanvas.height = h;
+      }
+      const vw = hdVideo.videoWidth || 1920, vh = hdVideo.videoHeight || 1080;
+      if (hdOverlayCanvas.width !== vw || hdOverlayCanvas.height !== vh) {
+        hdOverlayCanvas.width = vw; hdOverlayCanvas.height = vh;
+      }
+      redrawOverlay();
+    }
+    // Live camera → HD MSE preview (if enabled + MSE supported); upload mode and
+    // HD-disabled/MSE-missing stay on the MJPEG <img>. Both run the canvas overlay.
+    function enterHd() {
+      if (!hdPreviewConfig || !hdPreviewConfig.enabled || !window.MediaSource) return;
+      streamImg.style.display = 'none';
+      overlayCanvas.style.display = 'none';
+      hdVideo.style.display = '';
+      hdOverlayCanvas.style.display = '';
+      if (!hdOverlayCanvas.width) { hdOverlayCanvas.width = 1920; hdOverlayCanvas.height = 1080; }
+      if (!hdActive) { hdActive = true; hdPlayer.start(hdPreviewConfig.wsUrl); }
+      sizeCanvases();
+    }
+    function exitHd() {
+      if (hdActive) { hdPlayer.stop(); hdActive = false; }
+      hdVideo.style.display = 'none';
+      hdOverlayCanvas.style.display = 'none';
+      hdOverlayCtx.clearRect(0, 0, hdOverlayCanvas.width, hdOverlayCanvas.height);
+      streamImg.style.display = '';
+      overlayCanvas.style.display = '';
+      sizeCanvases();
+    }
+    hdVideo.addEventListener('loadedmetadata', sizeCanvases);
+    window.addEventListener('resize', sizeCanvases);
+    streamImg.addEventListener('load', sizeCanvases);
+
+    // SSE — real-time detection events
+    let evtSource = null;
+    function connectSSE() {
+      if (evtSource) evtSource.close();
+      evtSource = new EventSource('/api/events');
+
+      evtSource.onmessage = (e) => {
+        try {
+          const d = JSON.parse(e.data);
+          // SSE payload (parking_lot/app.py _process_result) carries arrays with
+          // normalized bboxes + separate *_count fields. Counts feed the stat
+          // cards/badges; the arrays feed the plate gallery + canvas overlay.
+          statVehiclesEl.textContent = d.vehicle_count || 0;
+          bump(statVehiclesEl);
+          statPlatesEl.textContent = d.plate_count || 0;
+          bump(statPlatesEl);
+
+          if (d.plates && d.plates.length > 0) {
+            updatePlates(d.plates);
+          }
+          if (d.spoof_alerts) {
+            for (const a of d.spoof_alerts) addAlert(a);
+            statAlertsEl.textContent = alerts.length;
+            bump(statAlertsEl);
+          }
+
+          updateStreamBadges({
+            vehicles: d.vehicle_count || 0,
+            plates: d.plate_count || 0,
+            alerts: d.spoof_alerts ? d.spoof_alerts.length : 0
+          });
+
+          // Redraw detection boxes + plate text on whichever preview is active.
+          latestDetection = d;
+          redrawOverlay();
+        } catch (err) { /* ignore parse errors */ }
+      };
+
+      evtSource.onerror = () => {
+        evtSource.close();
+        setTimeout(connectSSE, 3000);
+      };
+    }
+    connectSSE();
+
+    // Auto-enter HD 1080P MSE preview on the live camera when enabled + supported;
+    // enterHd() is a no-op otherwise and the MJPEG <img> stays as the preview.
+    enterHd();
+
+    // Poll stats every 3s
+    setInterval(() => {
+      fetch('/api/stats')
+        .then(r => r.json())
+        .then(d => {
+          fpsDisplayEl.textContent = `${d.fps || '--'} FPS`;
+          streamFpsEl.textContent = `${d.fps || '--'} FPS`;
+          statLatencyEl.textContent = d.infer_ms != null ? d.infer_ms.toFixed(1) : '--';
+          bump(statLatencyEl);
+          if (d.infer_fps) {
+            statInferSubEl.textContent = `${d.infer_fps} fps - ms/frame`;
+          } else {
+            statInferSubEl.textContent = 'ms per frame';
+          }
+          // HW (pure-NPU) latency when available; shown alongside the
+          // end-to-end inference latency above.
+          if (d.hw_infer_ms != null) {
+            statInferSubEl.textContent += ` - hw ${d.hw_infer_ms}ms`;
+          }
+          // Degraded state machine: red dot + "Degraded" when consecutive
+          // failures crossed the threshold; green "Live" otherwise.  The 10s
+          // /api/health poll below only tracks process liveness.
+          if (d.degraded) {
+            healthDotEl.className = 'status-dot degraded';
+            healthTextEl.textContent = `Degraded (${d.consecutive_failures})`;
+          } else {
+            healthDotEl.className = 'status-dot live';
+            healthTextEl.textContent = 'Live';
+          }
+          updateNPU(d.platform);
+        })
+        .catch(() => {
+          healthDotEl.className = 'status-dot offline';
+          healthTextEl.textContent = 'Offline';
+        });
+    }, 3000);
+
+    // Health check every 10s
+    setInterval(() => {
+      fetch('/api/health')
+        .then(r => {
+          if (!r.ok) throw new Error();
+          healthDotEl.className = 'status-dot live';
+          healthTextEl.textContent = 'Live';
+        })
+        .catch(() => {
+          healthDotEl.className = 'status-dot offline';
+          healthTextEl.textContent = 'Offline';
+        });
+    }, 10000);
+
+    // Initial stats fetch
+    fetch('/api/stats').then(r => r.json()).then(d => {
+      fpsDisplayEl.textContent = `${d.fps || '--'} FPS`;
+      streamFpsEl.textContent = `${d.fps || '--'} FPS`;
+      statLatencyEl.textContent = d.infer_ms != null ? d.infer_ms.toFixed(1) : '--';
+      if (d.infer_fps) {
+        statInferSubEl.textContent = `${d.infer_fps} fps - ms/frame`;
+      }
+      if (d.hw_infer_ms != null) {
+        statInferSubEl.textContent += ` - hw ${d.hw_infer_ms}ms`;
+      }
+      if (d.degraded) {
+        healthDotEl.className = 'status-dot degraded';
+        healthTextEl.textContent = `Degraded (${d.consecutive_failures})`;
+      }
+      updateNPU(d.platform);
+    }).catch(() => {});
+
+    // --- Upload / Mode switching ---
+    const uploadSectionEl = document.getElementById('uploadSection');
+    const uploadInfoEl = document.getElementById('uploadInfo');
+    const progressBarEl = document.getElementById('progressBar');
+    const uploadActionsEl = document.getElementById('uploadActions');
+    const uploadSummaryEl = document.getElementById('uploadSummary');
+    const btnDownloadEl = document.getElementById('btnDownload');
+    const btnLiveEl = document.getElementById('btnLive');
+    const btnUploadEl = document.getElementById('btnUpload');
+
+    function switchMode(mode) {
+      if (mode === 'live') {
+        fetch('/api/mode', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({mode: 'live'})
+        }).then(() => {
+          btnLiveEl.classList.add('active');
+          btnUploadEl.classList.remove('active');
+          uploadSectionEl.style.display = 'none';
+          // Back on the live camera → restore HD MSE preview if available.
+          enterHd();
+        });
+      }
+    }
+
+    function uploadVideo(input) {
+      const file = input.files[0];
+      if (!file) return;
+      const formData = new FormData();
+      formData.append('file', file);
+      uploadSectionEl.style.display = '';
+      uploadActionsEl.style.display = 'none';
+      uploadInfoEl.textContent = `Uploading ${esc(file.name)}...`;
+      progressBarEl.style.width = '0%';
+      btnLiveEl.classList.remove('active');
+      btnUploadEl.classList.add('active');
+
+      fetch('/api/upload', {method: 'POST', body: formData})
+        .then(r => r.json())
+        .then(d => {
+          if (d.error) {
+            uploadInfoEl.textContent = 'Error: ' + d.error;
+            return;
+          }
+          uploadInfoEl.textContent = 'Processing...';
+        })
+        .catch(e => { uploadInfoEl.textContent = 'Upload failed'; });
+      input.value = '';
+    }
+
+    // Poll mode/progress every 2s
+    setInterval(() => {
+      fetch('/api/mode').then(r => r.json()).then(d => {
+        const p = d.progress || {};
+        if (d.mode === 'upload' && p.status !== 'idle') {
+          btnLiveEl.classList.remove('active');
+          btnUploadEl.classList.add('active');
+          uploadSectionEl.style.display = '';
+          // Upload processing has no live H.264 source → MJPEG <img> (processed
+          // frames) is the preview; stop the HD player.
+          exitHd();
+
+          if (p.status === 'processing') {
+            const pct = p.total > 0 ? ((p.current / p.total) * 100).toFixed(0) : 0;
+            progressBarEl.style.width = pct + '%';
+            uploadInfoEl.textContent = `Processing: ${p.current} / ${p.total} frames (${pct}%)`;
+            uploadActionsEl.style.display = 'none';
+          } else if (p.status === 'done') {
+            progressBarEl.style.width = '100%';
+            uploadInfoEl.textContent = 'Processing complete!';
+            uploadActionsEl.style.display = '';
+            uploadSummaryEl.textContent = `${p.current} frames processed`;
+            if (p.result_file) {
+              btnDownloadEl.href = '/api/download/' + p.result_file;
+              btnDownloadEl.style.display = '';
+            }
+          } else if (p.status === 'error') {
+            uploadInfoEl.textContent = 'Error: ' + (p.error || 'Unknown error');
+          }
+        } else {
+          btnLiveEl.classList.add('active');
+          btnUploadEl.classList.remove('active');
+          uploadSectionEl.style.display = 'none';
+          // Live camera restored → bring back HD MSE preview if available.
+          enterHd();
+        }
+      }).catch(() => {});
+    }, 2000);
+  </script>
+</body>
+</html>

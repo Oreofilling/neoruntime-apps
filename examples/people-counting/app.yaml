@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: Application
+
+metadata:
+  id: people_counting
+  name: People Counting
+  version: 1.0.0
+  description: Count people in the scene and send alerts when threshold exceeded
+  author: AIPC
+
+spec:
+  image: aipc/people-counting:1.0.0
+
+  resources:
+    cpu: "50%"
+    memory: "256Mi"
+
+  permissions:
+    inference:
+      models:
+        - person_v1
+        - person_vehicle_v1
+      max_qps: 10
+
+    events:
+      publish:
+        - app/people_counting/*
+      subscribe:
+        - model/*/detections
+
+    device:
+      light: true
+
+  env:
+    - name: THRESHOLD
+      value: "10"
+
+  volumes:
+    - host: /data/aipc/logs/people_counting
+      container: /app/logs
+      readonly: false
+
+  autostart: false
+  restart_policy: on-failure
+  restart_max_retries: 3

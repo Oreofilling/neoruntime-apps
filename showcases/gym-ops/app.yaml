@@ -1,0 +1,142 @@
+# AIPC Platform Application Manifest
+# GymOps Pose Coach - Real-time gym pose analysis, counting, zone occupancy, safety alerts
+
+apiVersion: v1
+kind: Application
+
+metadata:
+  id: gym-ops
+  name: GymOps Pose Coach
+  version: 0.1.0
+  description: Real-time gym pose coaching with squat/pushup counting, zone occupancy, and safety alerts
+  author: AIPC Team
+
+spec:
+  image: aipc/gym-ops:0.1.0
+
+  resources:
+    cpu: "300%"
+    memory: "1Gi"
+
+  # Read-only access to host model files for yolov8s_pose auto-registration.
+  # app-manager sandbox rewrites this volume host to RootPath()/models on device
+  # (see memory: model-install-path-topology), so the same path works in-slot.
+  volumes:
+    - host: /data/aipc/models
+      container: /data/aipc/models
+      readonly: true
+    - host: /data/aipc/models
+      container: /opt/aipc/models
+      readonly: true
+    # Persistent config: face DB, audio prompts, config.yaml
+    - host: /data/aipc/etc/gym-ops
+      container: /data/aipc/etc/gym-ops
+
+  permissions:
+    video:
+      - main.raw
+      - sub.raw
+      - third.raw
+
+    inference:
+      max_qps: 30
+      max_concurrent: 2
+      allow_register_model: true
+
+    events:
+      publish:
+        - gym/occupancy
+        - gym/equipment
+        - gym/pose
+        - gym/alerts
+        - gym/health
+        - gym/identity
+
+    # host network so the browser can reach the web console + platform-api
+    # H.264 MSE endpoint on the device's LAN IP (mirrors model-showcase).
+    network:
+      mode: host
+      inbound:
+        - 8890
+
+  env:
+    - name: WEB_PORT
+      value: "8890"
+    - name: STREAM_ID
+      value: "sub"
+    - name: INFER_STREAM_ID
+      value: "sub"
+    - name: INFER_FPS
+      value: "10"
+    - name: POSE_MODEL
+      value: "yolov8s_pose"
+    - name: POSE_CONFIDENCE_THRESHOLD
+      value: "0.35"
+    - name: KEYPOINT_THRESHOLD
+      value: "0.25"
+    - name: SCORE_THRESHOLD
+      value: "0.6"
+    - name: NMS_THRESHOLD
+      value: "0.7"
+    - name: MODEL_ROOT
+      value: "/data/aipc/models"
+    - name: CONFIG_PATH
+      value: "/data/aipc/etc/gym-ops/config.yaml"
+    - name: LOG_LEVEL
+      value: "INFO"
+    - name: ALERT_COOLDOWN_SECONDS
+      value: "10"
+    - name: EQUIPMENT_OCCUPANCY_SECONDS
+      value: "5"
+    - name: LONG_OCCUPATION_SECONDS
+      value: "1800"
+    - name: FALL_CANDIDATE_SECONDS
+      value: "6"
+    - name: LONG_STATIC_SECONDS
+      value: "120"
+    # HD 1080P preview reuses platform-api hardware H.264 stream
+    # (wss://<lan-ip>:443/api/v1/h264/main) via browser-native MSE.
+    - name: PLATFORM_API_WS_SCHEME
+      value: "wss"
+    - name: PLATFORM_API_PORT
+      value: "443"
+    - name: PLATFORM_API_TOKEN
+      value: "${AIPC_TOKEN_KEY}"
+    # Secondary detection model for parallel inference (empty string = disabled)
+    - name: DETECT_MODEL
+      value: "yolov8n"
+    - name: ENABLE_PARALLEL_INFER
+      value: "true"
+    # Depth-N async inference pipeline: frames kept in-flight on the NPU.
+    # 1 = serial (legacy kill-switch); 2 = default pipeline; 3 = deeper.
+    - name: PIPELINE_DEPTH
+      value: "2"
+    # Face recognition (Phase 2) — empty string disables
+    - name: FACE_MODEL
+      value: "mobilefacenet"
+    - name: FACE_DB_PATH
+      value: "/data/aipc/etc/gym-ops/faces.json"
+    - name: FACE_THRESHOLD
+      value: "0.6"
+    # Audio prompts (Phase 3)
+    - name: AUDIO_DIR
+      value: "/data/aipc/etc/gym-ops/audio"
+    - name: AUDIO_COOLDOWN_SECONDS
+      value: "5"
+    # Gate unlock on member recognition (Phase 3)
+    - name: ENABLE_GATE
+      value: "false"
+    - name: ENABLE_ALARM
+      value: "true"
+    - name: GATE_UNLOCK_SECONDS
+      value: "5"
+
+  autostart: false
+  restart_policy: on-failure
+  restart_max_retries: 3
+
+  healthcheck:
+    enabled: true
+    interval: 30s
+    timeout: 5s
+    retries: 3

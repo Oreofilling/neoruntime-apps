@@ -1,0 +1,24 @@
+# mediamtx config - RTSP server for model-showcase
+logLevel: warn
+
+# RTSP only
+rtsp: true
+rtspAddress: :8555
+
+# Disable all other protocols
+rtmp: false
+srt: false
+webrtc: false
+hls: false
+api: false
+metrics: false
+pprof: false
+playback: false
+
+# Allow publish and read on the showcase path
+pathDefaults:
+  overridePublisher: true
+
+paths:
+  showcase:
+    source: publisher

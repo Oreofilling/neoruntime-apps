@@ -1,0 +1,5 @@
+*.aipc
+*.tar
+hailo_ipc_sdk/
+setup.py
+README.md

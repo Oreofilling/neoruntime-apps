@@ -1,0 +1,64 @@
+apiVersion: v1
+kind: Application
+
+metadata:
+  id: parallel_benchmark
+  name: Parallel Benchmark
+  version: 1.0.0
+  description: Model parallel inference capability showcase with real-time performance dashboard
+  author: AIPC Team
+  email: opensource@camthink.ai
+
+spec:
+  image: aipc/parallel-benchmark:1.0.0
+
+  resources:
+    cpu: "80%"
+    memory: "2Gi"
+
+  permissions:
+    video:
+      - cam0_main.raw
+    inference:
+      models:
+        - "*"
+      max_qps: 100
+      max_concurrent: 8
+      allow_register_model: false
+    network:
+      mode: host
+      inbound:
+        - 8095
+
+  env:
+    - name: APP_MODE
+      value: production
+    - name: WEB_PORT
+      value: "8095"
+    - name: STATS_INTERVAL_SEC
+      value: "1"
+    # HD 1080P hardware preview (platform-api /api/v1/h264/main via browser MSE).
+    # platform-api enforces TLS (http:8080 -> 301 -> https:443), so the H.264 WS
+    # stream is only reachable over wss on 443. The device cert is self-signed
+    # (CN=ne503): the browser must visit https://<host>/api/v1/system/health and
+    # accept the warning once, or wss fails silently and the preview stays black.
+    # Token is passed via ?token= query (no Authorization header on WS upgrade).
+    # Set HD_PREVIEW_ENABLED=0 to disable, PLATFORM_API_TLS=0 to force ws://8080.
+    - name: PLATFORM_API_TLS
+      value: "1"
+    - name: PLATFORM_API_PORT
+      value: "443"
+    - name: HD_PREVIEW_ENABLED
+      value: "1"
+    - name: PLATFORM_API_TOKEN
+      value: "${AIPC_TOKEN_KEY}"
+
+  autostart: false
+  restart_policy: on-failure
+  restart_max_retries: 3
+
+  healthcheck:
+    enabled: true
+    interval: 30s
+    timeout: 5s
+    retries: 3

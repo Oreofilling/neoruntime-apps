@@ -1,0 +1,57 @@
+# AIPC Platform Application Manifest
+# Visualizer - Real-time inference result preview
+
+apiVersion: v1
+kind: Application
+
+metadata:
+  id: visualizer
+  name: Inference Visualizer
+  version: 1.0.0
+  description: "Real-time inference result preview with HTTP MJPEG streaming"
+  author: AIPC Team
+
+spec:
+  image: visualizer:1.0.0
+
+  resources:
+    cpu: "100%"
+    memory: "512Mi"
+
+  permissions:
+    video:
+      - main.raw
+
+    events:
+      subscribe:
+        - inference/*
+        - detection/*
+      publish: []
+
+    # Use host networking to expose the HTTP port.
+    network:
+      mode: host
+
+  env:
+    - name: STREAM_ID
+      value: "main"
+    - name: SUBSCRIBE_TOPIC
+      value: "inference/face_cascade/*"
+    - name: HTTP_PORT
+      value: "8080"
+    - name: FPS
+      value: "15"
+    - name: JPEG_QUALITY
+      value: "80"
+    - name: SAVE_FRAMES
+      value: "false"
+    - name: LOG_LEVEL
+      value: "info"
+
+  volumes:
+    - host: /data/aipc/output/visualizer
+      container: /app/output
+      readonly: false
+
+  autostart: false
+  restart_policy: on-failure

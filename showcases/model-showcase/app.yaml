@@ -1,0 +1,100 @@
+# AIPC Platform Application Manifest
+# Model Showcase - Auto-registers models and provides type-specific visualization
+
+apiVersion: v1
+kind: Application
+
+metadata:
+  id: model-showcase
+  name: AI Model Showcase
+  version: 1.2.1
+  description: Real-time AI model showcase with auto-registration and type-specific visualization
+  author: AIPC Team
+
+spec:
+  image: aipc/model-showcase:1.2.1
+
+  resources:
+    cpu: "300%"
+    memory: "1Gi"
+
+  # Volume mounts — read-only access to host model files for auto-registration
+  volumes:
+    - host: /data/aipc/models
+      container: /data/aipc/models
+      readonly: true
+    - host: /data/aipc/models
+      container: /opt/aipc/models
+      readonly: true
+
+  permissions:
+    video:
+      - main.raw
+      - sub.raw
+      - third.raw
+
+    inference:
+      max_qps: 30
+      max_concurrent: 2
+      allow_register_model: true
+
+    network:
+      mode: host
+      inbound:
+        - 8889
+        - 8555
+
+  env:
+    - name: WEB_PORT
+      value: "8889"
+    - name: STREAM_ID
+      value: "sub"
+    - name: INFER_STREAM_ID
+      value: "sub"
+    - name: DEFAULT_CLIP_LABELS
+      value: "a person,a car,a dog,a cat,empty scene"
+    - name: LOG_LEVEL
+      value: "INFO"
+    - name: INFER_FPS
+      value: "15"
+    # gRPC C-core defaults to sched_yield busy-poll for sync completion,
+    # burning ~100% CPU in the infer loop. epoll1 uses blocking epoll instead.
+    - name: GRPC_POLL_STRATEGY
+      value: "epoll1"
+    # Imported-video playback runs on a dedicated decode thread, decoupled from
+    # INFER_FPS, so high-res imports play smoothly. Frames are decoded straight
+    # to VIDEO_DECODE_WxH in-thread (full-res never leaves the decoder). Tune
+    # these if needed; defaults are sane.
+    # VIDEO_PLAYBACK_FPS is intentionally NOT set here: it defaults to
+    # min(source_fps, 30), which respects the clip's own rate. Override only if
+    # you want to force a fixed playback rate.
+    - name: VIDEO_DECODE_W
+      value: "960"
+    - name: VIDEO_DECODE_H
+      value: "540"
+    - name: OUTPUT_MODE
+      value: "mjpeg"
+    - name: MODEL_ROOT
+      value: "/data/aipc/models"
+    - name: RTSP_URL
+      value: "rtsp://127.0.0.1:8555/showcase"
+    # HD 1080P preview reuses the platform-api hardware H.264 stream
+    # (wss://<lan-ip>:443/api/v1/h264/main) via browser-native MSE. The token
+    # mirrors platform-api auth.token_key; set scheme=ws/port=8080 for legacy
+    # non-TLS platform-api builds.
+    - name: PLATFORM_API_WS_SCHEME
+      value: "wss"
+    - name: PLATFORM_API_PORT
+      value: "443"
+    - name: PLATFORM_API_TOKEN
+      value: "${AIPC_TOKEN_KEY}"
+
+  autostart: false
+  restart_policy: on-failure
+  restart_max_retries: 3
+
+  healthcheck:
+    enabled: true
+    interval: 30s
+    timeout: 5s
+    retries: 3

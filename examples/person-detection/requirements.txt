@@ -1,0 +1,4 @@
+# Python dependencies for Person Detection Application
+# SDK is installed locally from the included package
+
+numpy>=1.21.0

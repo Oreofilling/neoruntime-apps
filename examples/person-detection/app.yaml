@@ -1,0 +1,83 @@
+# AIPC Platform Application Manifest
+# Person detection app - complete SDK, model, video stream, and event example
+
+apiVersion: v1
+kind: Application
+
+metadata:
+  id: person-detection
+  name: Person Detection
+  version: 1.0.0
+  description: Real-time person detection with AI inference and event publishing
+  author: AIPC Team
+
+spec:
+  # Container image
+  image: aipc/person-detection:1.0.0
+
+  # Resource limits
+  resources:
+    cpu: "50%"
+    memory: "256Mi"
+
+  # Permission configuration
+  permissions:
+    # Video stream access
+    video:
+      - third.raw      # Raw video stream (SHM) for zero-copy
+
+    # AI Inference permissions
+    inference:
+      models:
+        - person-detection  # Person detection model
+      max_qps: 30
+      max_concurrent: 2
+      allow_register_model: false
+
+    # Event bus permissions
+    events:
+      publish:
+        - app/person-detection/*
+        - alerts/detection
+      subscribe:
+        - system/*
+        - model/*/detections
+
+    # Device control (optional light linkage)
+    device:
+      light: true
+      ir_cut: true
+
+    # Network mode
+    network:
+      mode: isolated
+
+  # Environment variables
+  env:
+    - name: DETECTION_THRESHOLD
+      value: "0.7"
+    - name: ALERT_COOLDOWN_SECONDS
+      value: "5"
+    - name: LOG_LEVEL
+      value: "INFO"
+
+  # Volume mounts
+  volumes:
+    - host: /data/aipc/data/person-detection
+      container: /app/data
+      readonly: false
+    - host: /data/aipc/logs/person-detection
+      container: /app/logs
+      readonly: false
+
+  # Startup configuration
+  autostart: false
+  restart_policy: on-failure
+  restart_max_retries: 3
+
+  # Health check
+  healthcheck:
+    enabled: true
+    interval: 30s
+    timeout: 5s
+    retries: 3

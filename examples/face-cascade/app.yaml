@@ -1,0 +1,113 @@
+# AIPC Platform Application Manifest
+# Face Detection + Landmarks Cascade Inference
+
+apiVersion: v1
+kind: Application
+
+# ============================================
+# Metadata
+# ============================================
+metadata:
+  id: face_cascade
+  name: Face Cascade Inference
+  version: 1.0.0
+  description: "Cascade inference sample: face detection plus landmark detection on cropped face regions."
+  author: AIPC Team
+  email: opensource@camthink.ai
+
+# ============================================
+# App specification
+# ============================================
+spec:
+  # Container image
+  image: face-cascade:1.0.0
+
+  # --------------------------------------------
+  # Resource limits
+  # --------------------------------------------
+  resources:
+    cpu: "100%"
+    memory: "512Mi"
+
+  # --------------------------------------------
+  # Permission configuration
+  # --------------------------------------------
+  permissions:
+    # Video stream access
+    video:
+      - main.raw
+
+    # AI inference permissions
+    inference:
+      models:
+        - person_vehicle_v1
+        - face_landmarks_v1
+      max_qps: 30
+      max_concurrent: 4
+      allow_register_model: false
+
+    # Event bus permissions
+    events:
+      publish:
+        - inference/face_cascade/*
+        - app/face_cascade/*
+      subscribe:
+        - system/*
+
+    # Device-control permissions
+    device:
+      light: false
+      ir_cut: false
+      ptz: false
+      lens: false
+
+    # Network access
+    network:
+      mode: isolated
+
+  # --------------------------------------------
+  # Environment variables
+  # --------------------------------------------
+  env:
+    - name: STREAM_ID
+      value: "main"
+    - name: DETECTION_MODEL
+      value: "person_vehicle_v1"
+    - name: DETECTION_INPUT_SIZE
+      value: "384x640"
+    - name: DETECTION_INPUT_FORMAT
+      value: "NV12"
+    - name: LANDMARKS_MODEL
+      value: "face_landmarks_v1"
+    - name: FPS
+      value: "10"
+    - name: DETECTION_THRESHOLD
+      value: "0.5"
+    - name: PUBLISH_TOPIC
+      value: "inference/face_cascade/main"
+    - name: LOG_LEVEL
+      value: "info"
+
+  # --------------------------------------------
+  # Volume mounts
+  # --------------------------------------------
+  volumes:
+    - host: /data/aipc/logs/face_cascade
+      container: /app/logs
+      readonly: false
+
+  # --------------------------------------------
+  # Startup configuration
+  # --------------------------------------------
+  autostart: false
+  restart_policy: on-failure
+  restart_max_retries: 3
+
+  # --------------------------------------------
+  # Health check
+  # --------------------------------------------
+  healthcheck:
+    enabled: true
+    interval: 30s
+    timeout: 5s
+    retries: 3

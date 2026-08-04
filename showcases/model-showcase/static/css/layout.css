@@ -1,0 +1,59 @@
+/* ================================================================
+   NE503 — Layout System
+   Aesthetic: Clean, airy, spacious
+   ================================================================ */
+
+.app-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--space-5) var(--space-6);
+  max-width: 1080px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+/* ── Responsive ── */
+@media (max-width: 768px) {
+  .app-header {
+    padding: var(--space-2) var(--space-3);
+    gap: var(--space-2);
+  }
+  .app-logo { font-size: var(--text-base); }
+  .model-cards { max-width: 55vw; }
+  .model-card {
+    min-width: 120px;
+    max-width: 160px;
+    padding: var(--space-1) var(--space-2);
+  }
+  .app-main { padding: var(--space-3); }
+  .metrics-grid { gap: var(--space-1); }
+  .metric-card {
+    min-width: 100px;
+    padding: var(--space-2) var(--space-3);
+  }
+  .metric-icon { width: 18px; height: 18px; }
+  .metric-label { font-size: 0.5625rem; }
+  .metric-value { font-size: var(--text-sm); }
+  .result-panel { margin-top: var(--space-3); }
+  .panel-body { max-height: 160px; }
+  .search-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  }
+  .search-card img { height: 90px; }
+  .gallery-controls { flex-direction: column; }
+  .gallery-controls .search-input { min-width: unset; }
+  .chat-container { padding: var(--space-3); }
+  .chat-input-area { padding: var(--space-2) var(--space-3); }
+  .msg { max-width: 90%; }
+  .section-divider { margin: var(--space-4) 0; }
+}
+
+@media (max-width: 480px) {
+  .model-cards { max-width: 50vw; }
+  .model-card { min-width: 100px; }
+  .stream-wrapper { border-radius: var(--radius-md); }
+  .metric-card { min-width: 90px; flex: 1 1 calc(50% - var(--space-1)); }
+  .ambient-glow { display: none; }
+}

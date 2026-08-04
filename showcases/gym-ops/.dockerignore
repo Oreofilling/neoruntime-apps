@@ -1,0 +1,23 @@
+# Build artifacts
+*.tar
+*.tar.old
+*-image.tar
+
+# VCS / editor
+.git
+.gitignore
+.vscode
+.idea
+
+# Docs / scripts not needed at runtime
+*.md
+build.sh
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Uploads (runtime volume, not baked into image)
+uploads/
