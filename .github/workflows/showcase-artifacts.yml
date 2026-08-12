@@ -158,33 +158,70 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          mkdir -p upload-assets
 
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             release_tag="$GITHUB_REF_NAME"
             release_title="$GITHUB_REF_NAME"
-            release_notes="Showcase application bundles for $GITHUB_REF_NAME."
-            release_flags=()
+            release_notes_file="release-notes.md"
+            printf 'Showcase application bundles for %s.\n' "$GITHUB_REF_NAME" > "$release_notes_file"
+            create_flags=()
+            edit_flags=()
+            cp release-assets/*.tar.gz upload-assets/
           else
             release_tag="showcase-bundles-latest"
             release_title="Latest showcase bundles"
-            release_notes="Latest showcase application bundles built from main at $GITHUB_SHA."
-            release_flags=(--prerelease --latest=false)
+            release_notes_file="release-notes.md"
+            create_flags=(--prerelease --latest=false)
+            edit_flags=(--prerelease)
+
+            {
+              printf 'Latest showcase application bundles built from main at `%s`.\n\n' "$GITHUB_SHA"
+              printf '| Showcase | Download |\n'
+              printf '| -------- | -------- |\n'
+            } > "$release_notes_file"
+
+            for asset in release-assets/*.tar.gz; do
+              topdir="$(tar -tzf "$asset" | head -n 1 | cut -d/ -f1)"
+              arch="${topdir##*-}"
+              without_arch="${topdir%-${arch}}"
+              version="${without_arch##*-}"
+              app="${without_arch%-${version}}"
+              latest_name="${app}-latest-${arch}.tar.gz"
+
+              cp "$asset" "upload-assets/$latest_name"
+              printf '| `%s` | [`%s`](https://github.com/%s/releases/download/%s/%s) |\n' \
+                "$app" "$latest_name" "$GITHUB_REPOSITORY" "$release_tag" "$latest_name" >> "$release_notes_file"
+            done
           fi
 
           if gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$release_tag" release-assets/*.tar.gz \
+            if [ "$release_tag" = "showcase-bundles-latest" ]; then
+              gh release view "$release_tag" \
+                --repo "$GITHUB_REPOSITORY" \
+                --json assets \
+                --jq '.assets[].name' \
+                | while read -r asset_name; do
+                    [ -n "$asset_name" ] || continue
+                    gh release delete-asset "$release_tag" "$asset_name" \
+                      --repo "$GITHUB_REPOSITORY" \
+                      --yes
+                  done
+            fi
+
+            gh release upload "$release_tag" upload-assets/*.tar.gz \
               --repo "$GITHUB_REPOSITORY" \
               --clobber
             gh release edit "$release_tag" \
               --repo "$GITHUB_REPOSITORY" \
               --title "$release_title" \
-              --notes "$release_notes" \
-              "${release_flags[@]}"
+              --notes-file "$release_notes_file" \
+              "${edit_flags[@]}"
           else
-            gh release create "$release_tag" release-assets/*.tar.gz \
+            gh release create "$release_tag" upload-assets/*.tar.gz \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "$release_title" \
-              --notes "$release_notes" \
-              "${release_flags[@]}"
+              --notes-file "$release_notes_file" \
+              "${create_flags[@]}"
           fi

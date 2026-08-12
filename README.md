@@ -9,8 +9,13 @@ containerized AIPC apps.
 
 ## Downloads
 
-- [Latest showcase bundles](https://github.com/camthink-ai/neoruntime-apps/releases/tag/showcase-bundles-latest)
-- [Versioned releases](https://github.com/camthink-ai/neoruntime-apps/releases)
+| Showcase | Latest ARM64 bundle |
+| -------- | ------------------- |
+| Model Showcase | [model-showcase-latest-arm64.tar.gz](https://github.com/camthink-ai/neoruntime-apps/releases/download/showcase-bundles-latest/model-showcase-latest-arm64.tar.gz) |
+| Parking Lot | [parking-lot-latest-arm64.tar.gz](https://github.com/camthink-ai/neoruntime-apps/releases/download/showcase-bundles-latest/parking-lot-latest-arm64.tar.gz) |
+| Gym Ops | [gym-ops-latest-arm64.tar.gz](https://github.com/camthink-ai/neoruntime-apps/releases/download/showcase-bundles-latest/gym-ops-latest-arm64.tar.gz) |
+
+[All releases](https://github.com/camthink-ai/neoruntime-apps/releases)
 
 ## Repository Layout
 
