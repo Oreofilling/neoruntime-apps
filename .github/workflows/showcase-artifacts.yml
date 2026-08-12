@@ -141,7 +141,7 @@ jobs:
 
   release:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -159,14 +159,32 @@ jobs:
         run: |
           set -euo pipefail
 
-          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" release-assets/*.tar.gz \
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            release_tag="$GITHUB_REF_NAME"
+            release_title="$GITHUB_REF_NAME"
+            release_notes="Showcase application bundles for $GITHUB_REF_NAME."
+            release_flags=()
+          else
+            release_tag="showcase-bundles-latest"
+            release_title="Latest showcase bundles"
+            release_notes="Latest showcase application bundles built from main at $GITHUB_SHA."
+            release_flags=(--prerelease --latest=false)
+          fi
+
+          if gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$release_tag" release-assets/*.tar.gz \
               --repo "$GITHUB_REPOSITORY" \
               --clobber
+            gh release edit "$release_tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$release_title" \
+              --notes "$release_notes" \
+              "${release_flags[@]}"
           else
-            gh release create "$GITHUB_REF_NAME" release-assets/*.tar.gz \
+            gh release create "$release_tag" release-assets/*.tar.gz \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
-              --title "$GITHUB_REF_NAME" \
-              --notes "Showcase application bundles for $GITHUB_REF_NAME."
+              --title "$release_title" \
+              --notes "$release_notes" \
+              "${release_flags[@]}"
           fi

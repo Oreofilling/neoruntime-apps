@@ -1,9 +1,16 @@
 # NeoRuntime Apps
 
+[![Build showcase bundles](https://github.com/camthink-ai/neoruntime-apps/actions/workflows/showcase-artifacts.yml/badge.svg)](https://github.com/camthink-ai/neoruntime-apps/actions/workflows/showcase-artifacts.yml)
+
 Official sample applications and templates for the NeoRuntime edge AI platform.
 
 These applications are built against the NeoRuntime SDK and packaged as
 containerized AIPC apps.
+
+## Downloads
+
+- [Latest showcase bundles](https://github.com/camthink-ai/neoruntime-apps/releases/tag/showcase-bundles-latest)
+- [Versioned releases](https://github.com/camthink-ai/neoruntime-apps/releases)
 
 ## Repository Layout
 
