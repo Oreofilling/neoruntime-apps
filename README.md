@@ -50,6 +50,32 @@ Runtime credentials, device addresses, model files, and generated `.aipc`
 packages are intentionally not committed. Use environment variables and local
 deployment configuration for device-specific values.
 
+## Showcase Bundles
+
+Showcase bundles contain a Docker image tarball, `app.yaml`, companion YAML
+files, and checksums. GitHub Actions builds these bundles when files under
+`showcases/` change, and tag builds attach the bundles to the GitHub Release.
+If the SDK repository is private, configure the apps repository secret
+`SDK_REPO_TOKEN` with read access to the SDK repository.
+
+To build locally:
+
+```bash
+cd ../neoruntime-sdks/python
+python -m pip install --upgrade build
+python -m build --wheel
+
+cd ../../neoruntime-apps
+scripts/build_showcase_artifacts.sh \
+  --wheel ../neoruntime-sdks/python/dist/hailo_ipc_sdk-*.whl
+```
+
+To install a downloaded bundle on a device, extract it and run:
+
+```bash
+aipc-cli app install app.yaml <showcase>-image.tar
+```
+
 ## Related Repositories
 
 - `camthink-ai/neoruntime` - platform core

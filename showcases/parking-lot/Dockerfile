@@ -9,8 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY hailo_ipc_sdk-0.3.0-py3-none-any.whl /app/
-RUN pip install --no-cache-dir /app/hailo_ipc_sdk-0.3.0-py3-none-any.whl
+COPY .aipc-build/hailo_ipc_sdk-*.whl /tmp/
+RUN pip install --no-cache-dir /tmp/hailo_ipc_sdk-*.whl && rm -f /tmp/hailo_ipc_sdk-*.whl
 
 COPY requirements.txt /app/
 RUN pip install --no-cache-dir --retries 5 --timeout 120 -r requirements.txt
