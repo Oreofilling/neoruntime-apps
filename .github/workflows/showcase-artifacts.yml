@@ -1,0 +1,227 @@
+name: Build showcase bundles
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+    paths:
+      - "showcases/**"
+      - "scripts/build_showcase_artifacts.sh"
+      - ".github/workflows/showcase-artifacts.yml"
+  pull_request:
+    paths:
+      - "showcases/**"
+      - "scripts/build_showcase_artifacts.sh"
+      - ".github/workflows/showcase-artifacts.yml"
+  workflow_dispatch:
+    inputs:
+      sdk_repository:
+        description: SDK repository used to build the Python wheel.
+        required: false
+        default: camthink-ai/neoruntime-sdks
+        type: string
+      sdk_ref:
+        description: SDK branch, tag, or commit.
+        required: false
+        default: main
+        type: string
+      showcase:
+        description: Optional single showcase name. Leave empty to build all showcases.
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: showcase-bundles-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      showcases: ${{ steps.discover.outputs.showcases }}
+
+    steps:
+      - name: Checkout apps repository
+        uses: actions/checkout@v4
+
+      - name: Discover showcases
+        id: discover
+        env:
+          REQUESTED_SHOWCASE: ${{ inputs.showcase }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "$REQUESTED_SHOWCASE" ]; then
+            test -f "showcases/$REQUESTED_SHOWCASE/Dockerfile"
+            test -f "showcases/$REQUESTED_SHOWCASE/app.yaml"
+            printf 'showcases=["%s"]\n' "$REQUESTED_SHOWCASE" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          from pathlib import Path
+
+          showcases = [
+              path.name
+              for path in sorted(Path("showcases").iterdir())
+              if path.is_dir()
+              and (path / "Dockerfile").is_file()
+              and (path / "app.yaml").is_file()
+          ]
+          print(f"showcases={json.dumps(showcases)}")
+          PY
+
+  build:
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        showcase: ${{ fromJSON(needs.discover.outputs.showcases) }}
+        arch:
+          - arm64
+
+    steps:
+      - name: Checkout apps repository
+        uses: actions/checkout@v4
+        with:
+          path: apps
+
+      - name: Checkout SDK repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.sdk_repository || 'camthink-ai/neoruntime-sdks' }}
+          ref: ${{ inputs.sdk_ref || 'main' }}
+          path: sdks
+          token: ${{ secrets.SDK_REPO_TOKEN || github.token }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Build SDK wheel
+        working-directory: sdks/python
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip build
+          python -m build --wheel
+
+      - name: Build showcase bundle
+        working-directory: apps
+        run: |
+          set -euo pipefail
+          wheel="$(ls ../sdks/python/dist/hailo_ipc_sdk-*.whl | head -n 1)"
+          scripts/build_showcase_artifacts.sh \
+            --arch "${{ matrix.arch }}" \
+            --wheel "$wheel" \
+            --output dist/showcases \
+            "${{ matrix.showcase }}"
+
+      - name: Upload showcase bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.showcase }}-${{ matrix.arch }}-bundle
+          path: apps/dist/showcases/${{ matrix.showcase }}-*.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    needs: build
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download showcase bundles
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish GitHub Release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p upload-assets
+
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            release_tag="$GITHUB_REF_NAME"
+            release_title="$GITHUB_REF_NAME"
+            release_notes_file="release-notes.md"
+            printf 'Showcase application bundles for %s.\n' "$GITHUB_REF_NAME" > "$release_notes_file"
+            create_flags=()
+            edit_flags=()
+            cp release-assets/*.tar.gz upload-assets/
+          else
+            release_tag="showcase-bundles-latest"
+            release_title="Latest showcase bundles"
+            release_notes_file="release-notes.md"
+            create_flags=(--prerelease --latest=false)
+            edit_flags=(--prerelease)
+
+            {
+              printf 'Latest showcase application bundles built from main at `%s`.\n\n' "$GITHUB_SHA"
+              printf '| Showcase | Download |\n'
+              printf '| -------- | -------- |\n'
+            } > "$release_notes_file"
+
+            for asset in release-assets/*.tar.gz; do
+              topdir="$(tar -tzf "$asset" | head -n 1 | cut -d/ -f1)"
+              arch="${topdir##*-}"
+              without_arch="${topdir%-${arch}}"
+              version="${without_arch##*-}"
+              app="${without_arch%-${version}}"
+              latest_name="${app}-latest-${arch}.tar.gz"
+
+              cp "$asset" "upload-assets/$latest_name"
+              printf '| `%s` | [`%s`](https://github.com/%s/releases/download/%s/%s) |\n' \
+                "$app" "$latest_name" "$GITHUB_REPOSITORY" "$release_tag" "$latest_name" >> "$release_notes_file"
+            done
+          fi
+
+          if gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            if [ "$release_tag" = "showcase-bundles-latest" ]; then
+              gh release view "$release_tag" \
+                --repo "$GITHUB_REPOSITORY" \
+                --json assets \
+                --jq '.assets[].name' \
+                | while read -r asset_name; do
+                    [ -n "$asset_name" ] || continue
+                    gh release delete-asset "$release_tag" "$asset_name" \
+                      --repo "$GITHUB_REPOSITORY" \
+                      --yes
+                  done
+            fi
+
+            gh release upload "$release_tag" upload-assets/*.tar.gz \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+            gh release edit "$release_tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$release_title" \
+              --notes-file "$release_notes_file" \
+              "${edit_flags[@]}"
+          else
+            gh release create "$release_tag" upload-assets/*.tar.gz \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "$release_title" \
+              --notes-file "$release_notes_file" \
+              "${create_flags[@]}"
+          fi

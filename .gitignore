@@ -18,3 +18,4 @@ dist/
 *.key
 .tmp-*
 .tmp.*
+**/.aipc-build/

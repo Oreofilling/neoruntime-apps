@@ -1,9 +1,21 @@
 # NeoRuntime Apps
 
+[![Build showcase bundles](https://github.com/camthink-ai/neoruntime-apps/actions/workflows/showcase-artifacts.yml/badge.svg)](https://github.com/camthink-ai/neoruntime-apps/actions/workflows/showcase-artifacts.yml)
+
 Official sample applications and templates for the NeoRuntime edge AI platform.
 
 These applications are built against the NeoRuntime SDK and packaged as
 containerized AIPC apps.
+
+## Downloads
+
+| Showcase | Latest ARM64 bundle |
+| -------- | ------------------- |
+| Model Showcase | [model-showcase-latest-arm64.tar.gz](https://github.com/camthink-ai/neoruntime-apps/releases/download/showcase-bundles-latest/model-showcase-latest-arm64.tar.gz) |
+| Parking Lot | [parking-lot-latest-arm64.tar.gz](https://github.com/camthink-ai/neoruntime-apps/releases/download/showcase-bundles-latest/parking-lot-latest-arm64.tar.gz) |
+| Gym Ops | [gym-ops-latest-arm64.tar.gz](https://github.com/camthink-ai/neoruntime-apps/releases/download/showcase-bundles-latest/gym-ops-latest-arm64.tar.gz) |
+
+[All releases](https://github.com/camthink-ai/neoruntime-apps/releases)
 
 ## Repository Layout
 
@@ -49,6 +61,32 @@ application manifest for deployment to an NeoRuntime device.
 Runtime credentials, device addresses, model files, and generated `.aipc`
 packages are intentionally not committed. Use environment variables and local
 deployment configuration for device-specific values.
+
+## Showcase Bundles
+
+Showcase bundles contain a Docker image tarball, `app.yaml`, companion YAML
+files, and checksums. GitHub Actions builds these bundles when files under
+`showcases/` change, and tag builds attach the bundles to the GitHub Release.
+If the SDK repository is private, configure the apps repository secret
+`SDK_REPO_TOKEN` with read access to the SDK repository.
+
+To build locally:
+
+```bash
+cd ../neoruntime-sdks/python
+python -m pip install --upgrade build
+python -m build --wheel
+
+cd ../../neoruntime-apps
+scripts/build_showcase_artifacts.sh \
+  --wheel ../neoruntime-sdks/python/dist/hailo_ipc_sdk-*.whl
+```
+
+To install a downloaded bundle on a device, extract it and run:
+
+```bash
+aipc-cli app install app.yaml <showcase>-image.tar
+```
 
 ## Related Repositories
 
