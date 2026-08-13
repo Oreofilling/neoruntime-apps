@@ -124,7 +124,14 @@ jobs:
         working-directory: apps
         run: |
           set -euo pipefail
-          wheel="$(ls ../sdks/python/dist/hailo_ipc_sdk-*.whl | head -n 1)"
+          shopt -s nullglob
+          wheels=(../sdks/python/dist/hailo_ipc_sdk-*.whl)
+          shopt -u nullglob
+          if [ "${#wheels[@]}" -ne 1 ]; then
+            echo "Expected one SDK wheel, found ${#wheels[@]}." >&2
+            exit 1
+          fi
+          wheel="${wheels[0]}"
           scripts/build_showcase_artifacts.sh \
             --arch "${{ matrix.arch }}" \
             --wheel "$wheel" \
@@ -182,9 +189,9 @@ jobs:
             } > "$release_notes_file"
 
             for asset in release-assets/*.tar.gz; do
-              topdir="$(tar -tzf "$asset" | head -n 1 | cut -d/ -f1)"
-              arch="${topdir##*-}"
-              without_arch="${topdir%-${arch}}"
+              bundle_name="$(basename "$asset" .tar.gz)"
+              arch="${bundle_name##*-}"
+              without_arch="${bundle_name%-${arch}}"
               version="${without_arch##*-}"
               app="${without_arch%-${version}}"
               latest_name="${app}-latest-${arch}.tar.gz"
