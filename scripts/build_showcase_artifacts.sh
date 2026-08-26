@@ -20,6 +20,7 @@ Options:
   --arch arm64|amd64     Target container platform architecture (default: arm64)
   --output <dir>         Output directory for bundles (default: dist/showcases)
   --wheel <path>         Python SDK wheel to stage into each Docker build context
+                         (default resolution: third_party/ > dist/ > sibling SDK repos)
   -h, --help             Show this help
 
 Examples:
@@ -73,20 +74,29 @@ if [ -z "$OUTPUT_ROOT" ]; then
 fi
 
 find_default_wheel() {
-    local wheels=()
+    # Priority order: vendored wheel first so clean clones build with no
+    # sibling SDK repos; dist/ and sibling repos remain as fallbacks.
+    local bases=(
+        "$PROJECT_ROOT/third_party"
+        "$PROJECT_ROOT/dist"
+        "$PROJECT_ROOT/../neoruntime-sdks/python/dist"
+        "$PROJECT_ROOT/../ne503-aipc-sdks/python/dist"
+    )
 
+    local base wheels=()
     shopt -s nullglob
-    wheels+=("$PROJECT_ROOT"/dist/hailo_ipc_sdk-*.whl)
-    wheels+=("$PROJECT_ROOT"/../neoruntime-sdks/python/dist/hailo_ipc_sdk-*.whl)
-    wheels+=("$PROJECT_ROOT"/../ne503-aipc-sdks/python/dist/hailo_ipc_sdk-*.whl)
+    for base in "${bases[@]}"; do
+        wheels=("$base"/hailo_ipc_sdk-*.whl)
+        if [ "${#wheels[@]}" -gt 0 ]; then
+            printf '%s\n' "${wheels[@]}" | sort -V | tail -n 1
+            shopt -u nullglob
+            return
+        fi
+    done
     shopt -u nullglob
 
-    if [ "${#wheels[@]}" -eq 0 ]; then
-        echo "No SDK wheel found. Build one first or pass --wheel <path>." >&2
-        exit 1
-    fi
-
-    printf '%s\n' "${wheels[@]}" | sort -V | tail -n 1
+    echo "No SDK wheel found. Vendor one into third_party/ or pass --wheel <path>." >&2
+    exit 1
 }
 
 if [ -z "$WHEEL_PATH" ]; then

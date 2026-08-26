@@ -14,6 +14,7 @@ containerized AIPC apps.
 | Model Showcase | [model-showcase-latest-arm64.tar.gz](https://github.com/camthink-ai/neoruntime-apps/releases/download/showcase-bundles-latest/model-showcase-latest-arm64.tar.gz) |
 | Parking Lot | [parking-lot-latest-arm64.tar.gz](https://github.com/camthink-ai/neoruntime-apps/releases/download/showcase-bundles-latest/parking-lot-latest-arm64.tar.gz) |
 | Gym Ops | [gym-ops-latest-arm64.tar.gz](https://github.com/camthink-ai/neoruntime-apps/releases/download/showcase-bundles-latest/gym-ops-latest-arm64.tar.gz) |
+| Shelf Ops | [shelf-ops-latest-arm64.tar.gz](https://github.com/camthink-ai/neoruntime-apps/releases/download/showcase-bundles-latest/shelf-ops-latest-arm64.tar.gz) |
 
 [All releases](https://github.com/camthink-ai/neoruntime-apps/releases)
 
@@ -41,16 +42,18 @@ containerized AIPC apps.
 | `showcases/model-showcase/` | Showcase | Multi-model web showcase with visualization |
 | `showcases/parking-lot/` | Showcase | Parking-lot vehicle and plate extraction reference |
 | `showcases/gym-ops/` | Showcase | Gym pose coaching and occupancy reference |
+| `showcases/shelf-ops/` | Showcase | Shelf slot recognition: slot-anchored CLIP A–E classification, empty-slot & sales heatmap reference |
 
 ## Development
 
-Install the SDK from the sibling SDK repository, then work inside one app
+Install the vendored SDK wheel (see `third_party/`), then work inside one app
 directory at a time:
 
 ```bash
 cd examples/person-detection
 python -m venv .venv
 . .venv/bin/activate
+pip install ../../third_party/hailo_ipc_sdk-*.whl
 pip install -r requirements.txt
 python app.py
 ```
@@ -65,22 +68,22 @@ deployment configuration for device-specific values.
 ## Showcase Bundles
 
 Showcase bundles contain a Docker image tarball, `app.yaml`, companion YAML
-files, and checksums. GitHub Actions builds these bundles when files under
-`showcases/` change, and tag builds attach the bundles to the GitHub Release.
-If the SDK repository is private, configure the apps repository secret
-`SDK_REPO_TOKEN` with read access to the SDK repository.
+files, and checksums. GitHub Actions builds these bundles when showcase files
+or the vendored SDK wheel change, and tag builds attach the bundles to the
+GitHub Release.
 
-To build locally:
+To build locally, run the build script from any showcase directory (it wraps
+`scripts/build_showcase_artifacts.sh`):
 
 ```bash
-cd ../neoruntime-sdks/python
-python -m pip install --upgrade build
-python -m build --wheel
-
-cd ../../neoruntime-apps
-scripts/build_showcase_artifacts.sh \
-  --wheel ../neoruntime-sdks/python/dist/hailo_ipc_sdk-*.whl
+cd showcases/shelf-ops
+./build.sh
 ```
+
+The Python SDK wheel is vendored in `third_party/`, so a clean clone builds
+with no sibling SDK repositories or tokens (`--wheel` overrides, `dist/` and
+sibling SDK repos remain fallbacks). Builds do not need model files: models
+are mounted read-only from the device at runtime, never baked into images.
 
 To install a downloaded bundle on a device, extract it and run:
 

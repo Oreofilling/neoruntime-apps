@@ -13,6 +13,7 @@ dist/
 *.tar
 *.tar.*
 *.whl
+!third_party/*.whl
 *.log
 *.pem
 *.key
