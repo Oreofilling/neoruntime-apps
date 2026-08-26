@@ -1,5 +1,8 @@
 # AIPC Platform Application Manifest
 # Full field reference template
+#
+# What each permission actually enforces (with file:line evidence):
+# see docs/app-permissions.md
 
 apiVersion: v1
 kind: Application
@@ -31,15 +34,21 @@ spec:
 
   # --------------------------------------------
   # Permission configuration
+  # Container isolation (namespaces, 11-cap drop, cgroups) is always
+  # enforced; the service-level ACLs below vary — see docs/app-permissions.md
   # --------------------------------------------
   permissions:
-    # Video stream access
+    # Video stream access — declaring any stream mounts /dev/dma_heap
+    # read-only (needed for raw dma-buf frames); per-stream filtering
+    # is not enforced yet.
     video:
       - cam0_main.raw                 # Raw video stream (SHM)
       - cam0_sub.raw                  # Sub stream
       - cam0_main                     # Encoded video stream (Unix socket)
 
-    # AI inference permissions
+    # AI inference permissions — "models" is the real authorization list
+    # (shown in web UI, blocks model deletion, install-time checked via
+    # spec.models); qps/concurrent/allow_register_model not enforced yet.
     inference:
       models:                         # Allowed model IDs
         - person_vehicle_v1
@@ -48,7 +57,8 @@ spec:
       max_concurrent: 2               # Maximum concurrent inferences
       allow_register_model: false     # Whether this app may register models
 
-    # Event bus permissions
+    # Event bus permissions — review checklist only; the event bus applies
+    # no per-app topic ACL yet.
     events:
       publish:                        # Topics this app can publish (wildcards supported)
         - app/my_app/*
@@ -57,7 +67,8 @@ spec:
         - model/*/detections
         - system/*
 
-    # Device-control permissions
+    # Device-control permissions — review checklist only; device IPC
+    # sockets are mounted unconditionally today.
     device:
       light: true                     # White light control
       ir_cut: true                    # IR-cut control
@@ -67,10 +78,11 @@ spec:
         read: [12, 13]                # GPIO pins this app may read
         write: [21, 22]               # GPIO pins this app may write
 
-    # Network access
+    # Network access — "host" is enforced (shares host network namespace);
+    # the outbound allowlist is declared intent only, not enforced yet.
     network:
       mode: isolated                  # Network mode: "isolated" (default) or "host"
-      outbound:                       # Allowed outbound destinations in isolated mode
+      outbound:                       # Declared outbound destinations (not enforced yet)
         - "https://api.example.com"
         - "mqtt://broker.example.com:8883"
       inbound:                        # Inbound ports for host mode
@@ -99,6 +111,18 @@ spec:
       readonly: false
 
   # --------------------------------------------
+  # Model dependencies (R4A) — the formal way to consume platform models,
+  # replacing hand-configured model-id env vars. Each alias is injected as
+  # AIPC_MODEL_<alias>=<id> at container start; required models are
+  # existence-checked before the image is pulled. App code reads
+  # os.environ["AIPC_MODEL_clip"] instead of hardcoding the id.
+  # --------------------------------------------
+  # models:
+  #   clip:                            # alias: letters/digits/underscore, not starting with a digit
+  #     id: clip_vit_b_32              # platform model id (required)
+  #     required: true                 # missing => install fails (default false => warn only)
+
+  # --------------------------------------------
   # Startup configuration
   # --------------------------------------------
   autostart: true                     # Start automatically when the system starts
@@ -106,11 +130,15 @@ spec:
   restart_max_retries: 3              # Maximum retry count for restart_policy=on-failure
 
   # --------------------------------------------
-  # Security configuration (optional, strict by default)
+  # Security configuration (enforced when set — NOTE: default is OFF.
+  # Omitting this section = writable rootfs + privilege escalation allowed.
+  # Production apps should enable no_new_privileges; readonly_rootfs also
+  # means the app may only write under spec.volumes mounts.
+  # See docs/app-permissions.md)
   # --------------------------------------------
   # security:
-  #   no_new_privileges: true          # Prevent privilege escalation (default true)
-  #   readonly_rootfs: true            # Use a read-only root filesystem (default true)
+  #   no_new_privileges: true          # Block privilege escalation (setuid etc.)
+  #   readonly_rootfs: true            # Read-only root filesystem
 
   # --------------------------------------------
   # Dev Mode (development with hot reload)
