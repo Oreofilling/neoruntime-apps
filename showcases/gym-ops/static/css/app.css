@@ -72,7 +72,9 @@ body {
   grid-template-areas:
     "video persons"
     "video zones"
+    "video traj"
     "equip equip"
+    "sessions sessions"
     "alerts alerts";
   gap: 14px;
   padding: 14px 20px;
@@ -80,7 +82,9 @@ body {
 .video-panel { grid-area: video; }
 .persons-panel { grid-area: persons; }
 .zones-panel { grid-area: zones; }
+.traj-panel { grid-area: traj; }
 .equip-panel { grid-area: equip; }
+.sessions-panel { grid-area: sessions; }
 .alerts-panel { grid-area: alerts; }
 
 section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
@@ -146,13 +150,25 @@ section h2 { margin: 0 0 10px; font-size: 12px; color: var(--muted); text-transf
 
 .zones { display: flex; flex-direction: column; gap: 6px; }
 .zone-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; }
-.zone-row.crowd { border-color: rgba(255,93,93,0.5); }
+.zone-row.crowd { border-color: rgba(255,93,93,0.5); --zc: var(--bad); }
+.zone-row .z-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--zc, var(--accent)); }
 .zone-row .z-bar { flex: 1; height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
-.zone-row .z-bar i { display: block; height: 100%; background: var(--ok); }
-.zone-row.crowd .z-bar i { background: var(--bad); }
+.zone-row .z-bar i { display: block; height: 100%; background: var(--zc, var(--ok)); }
 .zone-row .z-name { font-size: 12px; min-width: 70px; }
 .zone-row .z-count { font-family: var(--mono); font-size: 12px; color: var(--muted); }
 .zone-row .z-count b { color: var(--text); }
+
+.traj { display: flex; flex-direction: column; gap: 6px; }
+.traj-row {
+  display: flex; align-items: center; gap: 10px; padding: 7px 10px;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px;
+  font-size: 12px;
+}
+.traj-row.confirmed { border-color: rgba(255,200,80,0.5); }
+.traj-row .traj-id { font-family: var(--mono); color: var(--text); min-width: 50px; }
+.traj-row .traj-zone { flex: 1; color: var(--muted); }
+.traj-row .traj-dwell { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.traj-row.confirmed .traj-dwell { color: var(--warn); }
 
 .equip { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
 .eq-card { padding: 10px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; }
@@ -175,6 +191,7 @@ section h2 { margin: 0 0 10px; font-size: 12px; color: var(--muted); text-transf
 .a-tag.long_static { background: rgba(245,179,66,0.1); color: var(--warn); }
 .a-tag.equipment_occupy { background: rgba(110,168,255,0.12); color: var(--accent); }
 .a-tag.long_occupation { background: rgba(245,179,66,0.12); color: var(--warn); }
+.a-tag.session { background: rgba(255,200,80,0.12); color: #ffc850; }
 .a-time { color: var(--dim); margin-left: auto; }
 
 .footer {
@@ -186,5 +203,5 @@ section h2 { margin: 0 0 10px; font-size: 12px; color: var(--muted); text-transf
 #conn-state.lost { color: var(--bad); }
 
 @media (max-width: 960px) {
-  .grid { grid-template-columns: 1fr; grid-template-areas: "video" "persons" "zones" "equip" "alerts"; }
+  .grid { grid-template-columns: 1fr; grid-template-areas: "video" "persons" "zones" "traj" "equip" "sessions" "alerts"; }
 }

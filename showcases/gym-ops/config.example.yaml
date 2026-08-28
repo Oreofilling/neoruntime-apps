@@ -8,91 +8,186 @@
 # bottom-right of the camera frame.
 
 # ---- zones (counted for occupancy + crowd alerts) ----
+# Optional per-zone keys:
+#   color: "#rrggbb"  — override the identity color used by the video overlay
+#                       badge and the sidebar row (default: low-saturation
+#                       palette assigned by config order, cycling through
+#                       #6ea8ff #3ecf8e #f5b342 #b48cff #4cc3d9 #ff8f6b)
+#   forbidden: true   — staff-only zone; drawn amber with a dashed border
 zones:
+  # Per-machine layout from snapshot 2026-08-24: one zone per machine,
+  # identical machines grouped (4 treadmills, 2 bikes). Boxes wrap where
+  # the user's body_center sits while using the machine; walkways between
+  # machines stay unassigned. Background machines (cable/Smith) overlap
+  # the foreground platform/treadmill row in screen space, resolved by
+  # the x=0.42 and y=0.45 seams (standing-at-machine above/left,
+  # on-platform below). The platform zone tapers with floor perspective.
   - id: "z1"
-    name: "Free Weight Area"
-    capacity: 8
-    polygon:
-      - [0.0, 0.0]
-      - [0.5, 0.0]
-      - [0.5, 0.6]
-      - [0.0, 0.6]
-
-  - id: "z2"
-    name: "Cardio Zone"
-    capacity: 10
-    polygon:
-      - [0.5, 0.0]
-      - [1.0, 0.0]
-      - [1.0, 0.6]
-      - [0.5, 0.6]
-
-  - id: "z3"
-    name: "Stretching Area"
+    name: "Treadmill Zone"
     capacity: 4
     polygon:
-      - [0.0, 0.6]
-      - [1.0, 0.6]
-      - [1.0, 1.0]
-      - [0.0, 1.0]
+      - [0.145, 0.16]
+      - [0.42, 0.16]
+      - [0.42, 0.36]
+      - [0.145, 0.36]
 
-  # Example forbidden zone — triggers gym/alerts type=forbidden_zone
-  # - id: "z4"
-  #   name: "Staff Only"
-  #   forbidden: true
-  #   capacity: 0
-  #   polygon:
-  #     - [0.9, 0.0]
-  #     - [1.0, 0.0]
-  #     - [1.0, 0.15]
-  #     - [0.9, 0.15]
+  - id: "z2"
+    name: "Stair Climber Zone"
+    capacity: 1
+    polygon:
+      - [0.00, 0.26]
+      - [0.135, 0.26]
+      - [0.135, 0.74]
+      - [0.00, 0.74]
+
+  - id: "z3"
+    name: "Bike Zone"
+    capacity: 2
+    polygon:
+      - [0.14, 0.36]
+      - [0.315, 0.36]
+      - [0.315, 0.67]
+      - [0.14, 0.67]
+
+  - id: "z4"
+    name: "Cable Machine Zone"
+    capacity: 1
+    polygon:
+      - [0.42, 0.11]
+      - [0.51, 0.11]
+      - [0.51, 0.45]
+      - [0.42, 0.45]
+
+  - id: "z5"
+    name: "Smith Machine Zone"
+    capacity: 1
+    polygon:
+      - [0.51, 0.11]
+      - [0.655, 0.11]
+      - [0.655, 0.45]
+      - [0.51, 0.45]
+
+  - id: "z6"
+    name: "Lifting Platform Zone"
+    capacity: 2
+    polygon:
+      - [0.36, 0.45]
+      - [0.71, 0.45]
+      - [0.72, 0.89]
+      - [0.32, 0.89]
+
+  - id: "z7"
+    name: "Dumbbell Zone"
+    capacity: 2
+    polygon:
+      - [0.72, 0.34]
+      - [0.93, 0.34]
+      - [0.93, 0.78]
+      - [0.72, 0.78]
 
 # ---- equipment (tracked for occupancy + long-usage alerts) ----
+# Bboxes matched to the machines actually visible in the camera view
+# (snapshot 2026-08-24): treadmill row + cardio on the left wall,
+# cable + Smith behind the lifting platform, dumbbell rack right.
 equipment:
   - id: "e1"
-    name: "Squat Rack A"
+    name: "Treadmill 1"
     zone_id: "z1"
     polygon:
-      - [0.05, 0.10]
-      - [0.20, 0.10]
-      - [0.20, 0.25]
-      - [0.05, 0.25]
+      - [0.165, 0.21]
+      - [0.225, 0.21]
+      - [0.225, 0.33]
+      - [0.165, 0.33]
 
   - id: "e2"
-    name: "Squat Rack B"
+    name: "Treadmill 2"
     zone_id: "z1"
     polygon:
-      - [0.25, 0.10]
-      - [0.40, 0.10]
-      - [0.40, 0.25]
-      - [0.25, 0.25]
+      - [0.23, 0.21]
+      - [0.29, 0.21]
+      - [0.29, 0.33]
+      - [0.23, 0.33]
 
   - id: "e3"
-    name: "Bench Press"
+    name: "Treadmill 3"
     zone_id: "z1"
     polygon:
-      - [0.05, 0.30]
-      - [0.20, 0.30]
-      - [0.20, 0.45]
-      - [0.05, 0.45]
+      - [0.295, 0.21]
+      - [0.355, 0.21]
+      - [0.355, 0.33]
+      - [0.295, 0.33]
 
   - id: "e4"
-    name: "Treadmill 1"
-    zone_id: "z2"
+    name: "Treadmill 4"
+    zone_id: "z1"
     polygon:
-      - [0.55, 0.10]
-      - [0.70, 0.10]
-      - [0.70, 0.25]
-      - [0.55, 0.25]
+      - [0.36, 0.21]
+      - [0.415, 0.21]
+      - [0.415, 0.33]
+      - [0.36, 0.33]
 
   - id: "e5"
-    name: "Treadmill 2"
+    name: "Stair Climber"
     zone_id: "z2"
     polygon:
-      - [0.75, 0.10]
-      - [0.90, 0.10]
-      - [0.90, 0.25]
-      - [0.75, 0.25]
+      - [0.005, 0.30]
+      - [0.14, 0.30]
+      - [0.14, 0.72]
+      - [0.005, 0.72]
+
+  - id: "e6"
+    name: "Recumbent Bike"
+    zone_id: "z3"
+    polygon:
+      - [0.155, 0.26]
+      - [0.28, 0.26]
+      - [0.28, 0.42]
+      - [0.155, 0.42]
+
+  - id: "e7"
+    name: "Upright Bike"
+    zone_id: "z3"
+    polygon:
+      - [0.125, 0.33]
+      - [0.295, 0.33]
+      - [0.295, 0.64]
+      - [0.125, 0.64]
+
+  - id: "e8"
+    name: "Cable Machine"
+    zone_id: "z4"
+    polygon:
+      - [0.375, 0.13]
+      - [0.49, 0.13]
+      - [0.49, 0.47]
+      - [0.375, 0.47]
+
+  - id: "e9"
+    name: "Smith Machine"
+    zone_id: "z5"
+    polygon:
+      - [0.50, 0.14]
+      - [0.635, 0.14]
+      - [0.635, 0.46]
+      - [0.50, 0.46]
+
+  - id: "e11"
+    name: "Lifting Platform"
+    zone_id: "z6"
+    polygon:
+      - [0.355, 0.395]
+      - [0.778, 0.395]
+      - [0.778, 0.878]
+      - [0.355, 0.878]
+
+  - id: "e10"
+    name: "Dumbbell Rack"
+    zone_id: "z7"
+    polygon:
+      - [0.715, 0.35]
+      - [0.90, 0.35]
+      - [0.90, 0.60]
+      - [0.715, 0.60]
 
 # ---- after-hours (closed-hours presence alert) ----
 # When people are detected during these hours, gym/alerts type=after_hours

@@ -21,6 +21,7 @@ TOPIC_POSE = "gym/pose"
 TOPIC_ALERTS = "gym/alerts"
 TOPIC_HEALTH = "gym/health"
 TOPIC_IDENTITY = "gym/identity"
+TOPIC_TRAJECTORY = "gym/trajectory"
 
 
 @dataclass

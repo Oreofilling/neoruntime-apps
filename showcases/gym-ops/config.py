@@ -84,7 +84,11 @@ MODEL_DEFS: dict[str, ModelDef] = {
             "yolov8_pose_network_width": 640,
             "yolov8_pose_network_height": 640,
             "iou_threshold": 0.7,
-            "score_threshold": 0.6,
+            # Person-box score gate. This create-time blob is the EFFECTIVE
+            # filter for native_yolov8_pose (runtime update_postprocess_config
+            # ignores it, see comment above). 0.6 dropped distant/small
+            # gym-goers on the 640x640 input; 0.35 recovers them.
+            "score_threshold": 0.35,
             "keypoint_threshold": 0.25,
             "confidence_threshold": 0.35,
         }),
@@ -124,7 +128,7 @@ class GymConfig:
     pose_model: str = "yolov8s_pose"
     pose_confidence_threshold: float = 0.35
     keypoint_threshold: float = 0.25
-    score_threshold: float = 0.6
+    score_threshold: float = 0.35
     nms_threshold: float = 0.7
     model_root: str = "/data/aipc/models"
 
@@ -169,14 +173,43 @@ class GymConfig:
     enable_alarm: bool = True                 # Alarm output on safety events
     gate_unlock_seconds: float = 5.0          # auto-relock after this many seconds
 
+    # --- trajectory (zone-visit sessions) ---
+    enable_trajectory: bool = True            # master switch for the feature
+    trajectory_min_visit_seconds: float = 3.0     # debounce: dwell needed to count as a visit
+    trajectory_rejoin_seconds: float = 30.0       # quick return to same zone merges into one visit
+    trajectory_session_close_seconds: float = 10.0  # person unseen this long closes their session
+    trajectory_trail_points: int = 60         # overlay trail ring-buffer length per person
+    trajectory_persist: bool = True           # write session summaries to JSONL
+    trajectory_link_member_identity: bool = False  # privacy: keep member_id on disk (default strip)
+    trajectory_retention_days: int = 30       # JSONL files older than this are pruned
+    trajectory_dir: str = "/data/aipc/etc/gym-ops/trajectory"
+    trajectory_rebind_counter: bool = True    # rebuild counter on visit_confirmed when exercise differs
+
     # --- config source ---
     config_path: str = ""
 
     def model_def(self) -> ModelDef:
         return MODEL_DEFS[self.pose_model]
 
+    # Models bundled in the image (flat layout; see Dockerfile). NOT
+    # /opt/aipc/models — app.yaml bind-mounts host /data/aipc/models there,
+    # which would shadow image content on device.
+    _BUNDLED_MODEL_ROOT = "/opt/aipc/bundled-models"
+
+    def _resolve_model_path(self, rel: str) -> str:
+        """Host-provisioned copy first; image-bundled fallback otherwise.
+
+        Devices that pre-provision /data/aipc/models keep using their own
+        copy; fresh installs fall back to the file bundled in the image so
+        installs are plug-and-play.
+        """
+        host = os.path.join(self.model_root, rel)
+        if os.path.isfile(host):
+            return host
+        return os.path.join(self._BUNDLED_MODEL_ROOT, os.path.basename(rel))
+
     def model_full_path(self) -> str:
-        return os.path.join(self.model_root, self.model_def().path)
+        return self._resolve_model_path(self.model_def().path)
 
     def detect_model_def(self) -> ModelDef | None:
         """Return ModelDef for the secondary detection model, or None if disabled."""
@@ -189,7 +222,7 @@ class GymConfig:
         ddef = self.detect_model_def()
         if ddef is None:
             return None
-        return os.path.join(self.model_root, ddef.path)
+        return self._resolve_model_path(ddef.path)
 
 
 def _env(name: str, default: str) -> str:
@@ -237,7 +270,7 @@ def load_config() -> GymConfig:
         pose_model=_env("POSE_MODEL", "yolov8s_pose"),
         pose_confidence_threshold=_env_float("POSE_CONFIDENCE_THRESHOLD", 0.35),
         keypoint_threshold=_env_float("KEYPOINT_THRESHOLD", 0.25),
-        score_threshold=_env_float("SCORE_THRESHOLD", 0.6),
+        score_threshold=_env_float("SCORE_THRESHOLD", 0.35),
         nms_threshold=_env_float("NMS_THRESHOLD", 0.7),
         model_root=_env("MODEL_ROOT", "/data/aipc/models"),
         detect_model=_env("DETECT_MODEL", "yolov8n"),
@@ -263,6 +296,16 @@ def load_config() -> GymConfig:
         enable_gate=_env("ENABLE_GATE", "false").lower() in ("true", "1", "yes"),
         enable_alarm=_env("ENABLE_ALARM", "true").lower() in ("true", "1", "yes"),
         gate_unlock_seconds=_env_float("GATE_UNLOCK_SECONDS", 5.0),
+        enable_trajectory=_env("ENABLE_TRAJECTORY", "true").lower() in ("true", "1", "yes"),
+        trajectory_min_visit_seconds=_env_float("TRAJECTORY_MIN_VISIT_SECONDS", 3.0),
+        trajectory_rejoin_seconds=_env_float("TRAJECTORY_REJOIN_SECONDS", 30.0),
+        trajectory_session_close_seconds=_env_float("TRAJECTORY_SESSION_CLOSE_SECONDS", 10.0),
+        trajectory_trail_points=_env_int("TRAJECTORY_TRAIL_POINTS", 60),
+        trajectory_persist=_env("TRAJECTORY_PERSIST", "true").lower() in ("true", "1", "yes"),
+        trajectory_link_member_identity=_env("TRAJECTORY_LINK_MEMBER_IDENTITY", "false").lower() in ("true", "1", "yes"),
+        trajectory_retention_days=_env_int("TRAJECTORY_RETENTION_DAYS", 30),
+        trajectory_dir=_env("TRAJECTORY_DIR", "/data/aipc/etc/gym-ops/trajectory"),
+        trajectory_rebind_counter=_env("TRAJECTORY_REBIND_COUNTER", "true").lower() in ("true", "1", "yes"),
     )
 
     overlay = _load_yaml_overlay(config_path)

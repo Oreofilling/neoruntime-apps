@@ -24,6 +24,7 @@
   <div class="topbar-actions">
     <button id="btn-hd" class="seg active" data-mode="hd">HD Live</button>
     <button id="btn-mjpeg" class="seg" data-mode="sync">Sync WS</button>
+    <button id="btn-trail" class="seg active" title="Toggle motion trails on the overlay">Trail</button>
   </div>
 </header>
 
@@ -59,9 +60,19 @@
     <div class="zones" id="zones"><p class="empty">No zones configured</p></div>
   </section>
 
+  <section class="traj-panel">
+    <h2>Movement</h2>
+    <div class="traj" id="trajectory"><p class="empty">No active visits</p></div>
+  </section>
+
   <section class="equip-panel">
     <h2>Equipment Occupancy</h2>
     <div class="equip" id="equip"><p class="empty">No equipment configured</p></div>
+  </section>
+
+  <section class="sessions-panel">
+    <h2>Sessions</h2>
+    <ul class="alerts" id="sessions"><li class="empty">No sessions closed yet</li></ul>
   </section>
 
   <section class="alerts-panel">

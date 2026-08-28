@@ -70,6 +70,14 @@ var state = {
   npuEma: null,          // smoothed NPU device_utilization (raw sample flickers 0↔2%)
   videoMode: false,      // uploaded-video mode bakes overlay server-side
   hd: null,
+  streamFps: null,       // /stream?fps=N throttle, set when HD auto-degrades (null = full rate)
+  degraded: false,       // true after auto-degrade HD→MJPEG; cleared on manual HD retry / upload
+  trajectory: {
+    enabled: true,       // motion-trail overlay toggle (btn-trail)
+    trails: {},          // tracker_id → [[x,y], ...] normalized body-center points
+    active: [],          // active zone-visit rows from snapshot.trajectory
+    sessions: [],        // closed session summaries (timeline, newest first)
+  },
   sync: {
     active: false,
     ws: null,
@@ -122,6 +130,11 @@ function createHdPlayer(video, opts) {
   var firstPts, lastPts, fps = 30, nextTs = 0;
   var queue = [], url = '', active = false, destroyed = false;
   var mseOpen = false, retryTimer = null, mseErrs = 0, restartTimer = null;
+  // Resilience state for lossy relay paths (SSH tunnels die silently, jitter
+  // starves the MSE buffer): frame watchdog, backoff restarts, auto-degrade.
+  var watchdogTimer = null, lastDataTs = 0, stableMs = 0;
+  var restartBackoffMs = 800, restartHistory = [], degraded = false;
+  var adaptiveDelay = opts.adaptiveDelay !== false;  // sync mode drives liveDelay per sample
 
   function eqArr(a, b) { if (!a || !b || a.length !== b.length) return false; for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false; return true; }
   function codecFromSps(s) { function h2(n) { return ('0' + n.toString(16)).slice(-2); } return 'avc1.' + h2(s[1]) + h2(s[2]) + h2(s[3]); }
@@ -154,16 +167,58 @@ function createHdPlayer(video, opts) {
         var end = video.buffered.end(video.buffered.length - 1);
         var lead = end - video.currentTime;
         var target = Math.max(video.buffered.start(0), end - liveDelay);
-        if ((lead > liveDelay + 0.35 || lead < Math.max(0.02, liveDelay - 0.35))
-            && Math.abs(video.currentTime - target) > 0.05) {
+        if (target > video.currentTime + 0.3) {
+          // fell behind (bandwidth dip): skip forward to the live edge
           video.currentTime = target;
+        } else if (target < video.currentTime - 0.05 && lead < 0.5) {
+          // nearly ran the buffer dry. Rewinding replays just-shown content
+          // (visible stutter) and fires repeatedly on jittery links; grow the
+          // delay budget instead and only rewind when a stall is imminent.
+          if (adaptiveDelay && liveDelay < 4.0) liveDelay = Math.min(4.0, liveDelay + 0.5);
+          if (lead < 0.15) video.currentTime = target;
         }
         if (sb.buffered.length && video.currentTime > sb.buffered.start(0) + Math.max(4, liveDelay + 3)) { sb.remove(0, video.currentTime - Math.max(3, liveDelay + 2)); return; }
       }
     } catch (e) {}
   }
-  function onMseError() { if (destroyed || !active) return; mseErrs++; if (mseErrs > 5) return; scheduleRestart(); }
-  function scheduleRestart() { if (restartTimer || destroyed || !active) return; restartTimer = setTimeout(function () { restartTimer = null; if (active && !destroyed) { teardownMse(); openMse(); if (url) connectWs(url); } }, 800); }
+  function onMseError() { if (destroyed || !active) return; mseErrs++; scheduleRestart(); }
+  // Restart with exponential backoff instead of giving up after N errors: a
+  // permanently black video forces a manual reload, which over a slow relay
+  // just repeats the cycle. Error count now only feeds the degrade decision.
+  function scheduleRestart() {
+    if (restartTimer || destroyed || !active) return;
+    var now = Date.now();
+    restartHistory.push(now);
+    while (restartHistory.length && now - restartHistory[0] > 30000) restartHistory.shift();
+    if (maybeDegrade()) { teardownMse(); return; }
+    var delay = restartBackoffMs;
+    restartBackoffMs = Math.min(8000, restartBackoffMs * 2);
+    restartTimer = setTimeout(function () {
+      restartTimer = null;
+      if (active && !destroyed) { teardownMse(); openMse(); if (url) connectWs(url); }
+    }, delay);
+  }
+  // Auto-degrade: 3 restarts within 30s (or 3 MSE errors) means this link
+  // can't sustain H.264+MSE right now — hand the caller a lighter fallback.
+  function maybeDegrade() {
+    if (degraded || destroyed || !active || typeof opts.onDegrade !== "function") return false;
+    if (restartHistory.length >= 3 || mseErrs >= 3) {
+      degraded = true;
+      try { opts.onDegrade(restartHistory.length >= 3 ? "restart storm" : "decode errors"); } catch (e) {}
+      return true;
+    }
+    return false;
+  }
+  // Frame watchdog: relay/SSH tunnels can die silently (no FIN/RST), leaving
+  // ws.onclose unfired and the video frozen forever. 5s without a frame →
+  // force-close the socket so the existing onclose reconnect path runs.
+  function tickWatchdog() {
+    if (destroyed || !active) return;
+    var idleMs = lastDataTs ? Date.now() - lastDataTs : 0;
+    if (idleMs > 5000 && ws && ws.readyState === 1) { try { ws.close(); } catch (e) {} return; }
+    if (idleMs < 2000) { stableMs += 1000; if (stableMs >= 30000) { restartBackoffMs = 800; stableMs = 0; } }
+    else stableMs = 0;
+  }
   function resetDecoder() { initialized = false; muxer = null; hasFirstI = false; nextTs = 0; firstPts = undefined; lastPts = undefined; pps = null; queue = []; }
   function teardownMse() {
     try { if (sb) { sb.removeEventListener('updateend', onUpd); sb.removeEventListener('error', onMseError); if (ms && ms.readyState === 'open') { try { sb.abort(); } catch (e) {} } } } catch (e) {}
@@ -240,16 +295,22 @@ function createHdPlayer(video, opts) {
   function connectWs(u) {
     try { ws = new WebSocket(u); } catch (e) { scheduleRestart(); return; }
     ws.binaryType = 'arraybuffer';
-    ws.onmessage = function (ev) { handleMsg(ev.data); };
+    ws.onmessage = function (ev) { lastDataTs = Date.now(); handleMsg(ev.data); };
     ws.onopen = function () { mseErrs = 0; };
     ws.onclose = function () { if (active && !destroyed) { retryTimer = setTimeout(function () { retryTimer = null; if (active && !destroyed && url) connectWs(url); }, 1200); } };
     ws.onerror = function () { try { ws.close(); } catch (e) {} };
   }
 
   return {
-    start: function (u) { url = u; active = true; destroyed = false; mseErrs = 0; resetDecoder(); sps = null; pps = null; openMse(); connectWs(u); },
+    start: function (u) {
+      url = u; active = true; destroyed = false; mseErrs = 0;
+      lastDataTs = Date.now(); stableMs = 0; restartBackoffMs = 800; restartHistory = []; degraded = false;
+      resetDecoder(); sps = null; pps = null; openMse(); connectWs(u);
+      if (!watchdogTimer) watchdogTimer = setInterval(tickWatchdog, 1000);
+    },
     stop: function () {
       active = false;
+      if (watchdogTimer) { clearInterval(watchdogTimer); watchdogTimer = null; }
       if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
       if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
       if (ws) { ws.onclose = null; ws.onerror = null; ws.onmessage = null; try { ws.close(); } catch (e) {} ws = null; }
@@ -405,7 +466,8 @@ function enterSync() {
   state.sync.poseBuffer = [];
   state.sync.videoDelaySeconds = SYNC_VIDEO_DELAY_SECONDS;
   startHdVideo("Starting H.264 video + pose metadata WS...", {
-    liveDelaySeconds: SYNC_VIDEO_DELAY_SECONDS
+    liveDelaySeconds: SYNC_VIDEO_DELAY_SECONDS,
+    adaptiveDelay: false   // updateSyncVideoDelay drives liveDelay per sample
   });
   connectSyncWs();
 }
@@ -467,6 +529,7 @@ function onSnapshot(s) {
   renderZones(s.zones || { counts: {}, crowded: [] });
   renderEquipment((s.zones && s.zones.equipment) || []);
   renderAlerts(s.alerts || []);
+  handleTrajectory(s.trajectory);
   // overlay is now drawn by animateOverlay() rAF loop (no direct drawPose here)
 
   var hb = $("badge-health");
@@ -511,18 +574,18 @@ function renderZones(z) {
   var el = $("zones");
   var counts = z.counts || {};
   var crowd = {}; (z.crowded || []).forEach(function (id) { crowd[id] = true; });
-  var ids = Object.keys(counts);
-  if (!ids.length) ids = state.zones.map(function (zz) { return zz.id; });
-  if (!ids.length) { el.innerHTML = '<p class="empty">No zones configured</p>'; return; }
-  el.innerHTML = ids.map(function (id) {
-    var cap = 0; for (var i = 0; i < state.zones.length; i++) if (state.zones[i].id === id) { cap = state.zones[i].capacity || 0; break; }
+  if (!state.zones.length) { el.innerHTML = '<p class="empty">No zones configured</p>'; return; }
+  el.innerHTML = state.zones.map(function (zz) {
+    var id = zz.id;
     var n = counts[id] || 0;
+    var cap = zz.capacity || 0;
     var isCrowd = !!crowd[id];
     var cls = isCrowd ? "zone-row crowd" : "zone-row";
+    var style = ' style="--zc:' + (zz.color || "#6ea8ff") + '"';
     var bar = cap
       ? '<div class="z-bar"><i style="width:' + Math.min(100, Math.round(n / cap * 100)) + '%"></i></div><span class="z-count"><b>' + n + "</b>/" + cap + "</span>"
       : '<span class="z-count"><b>' + n + "</b></span>";
-    return '<div class="' + cls + '"><span class="z-name">' + state.zoneName(id) + "</span>" + bar + "</div>";
+    return '<div class="' + cls + '"' + style + '><i class="z-dot"></i><span class="z-name">' + zz.name + "</span>" + bar + "</div>";
   }).join("");
 }
 
@@ -547,6 +610,57 @@ function renderAlerts(alerts) {
     var label = (t + " " + who).trim();
     var ts = new Date((a.ts || 0) * 1000).toLocaleTimeString();
     return '<li><span class="a-tag ' + t + '">' + t + "</span><span>" + label + '</span><span class="a-time">' + ts + "</span></li>";
+  }).join("");
+}
+
+// ── render: trajectory (zone-visit sessions) ──
+function handleTrajectory(tr) {
+  if (!tr) return;
+  state.trajectory.trails = tr.trails || {};
+  state.trajectory.active = tr.active || [];
+  (tr.events || []).forEach(function (ev) {
+    if (ev && ev.type === "session_summary") {
+      state.trajectory.sessions.unshift(ev);
+      if (state.trajectory.sessions.length > 50) state.trajectory.sessions.length = 50;
+    }
+  });
+  renderTrajectory();
+}
+
+function renderTrajectory() {
+  var act = $("trajectory");
+  if (act) {
+    if (!state.trajectory.active.length) {
+      act.innerHTML = '<p class="empty">No active visits</p>';
+    } else {
+      act.innerHTML = state.trajectory.active.map(function (a) {
+        var zone = a.current_zone ? state.zoneName(a.current_zone) : "transit";
+        var who = a.member_id || a.tracker_id;
+        var cls = a.confirmed ? "traj-row confirmed" : "traj-row";
+        return '<div class="' + cls + '"><span class="traj-id">' + who + "</span>" +
+          '<span class="traj-zone">' + zone + '</span><span class="traj-dwell">' +
+          Math.round(a.zone_dwell_s || 0) + "s</span></div>";
+      }).join("");
+    }
+  }
+  var tl = $("sessions");
+  if (!tl) return;
+  if (!state.trajectory.sessions.length) {
+    tl.innerHTML = '<li class="empty">No sessions closed yet</li>';
+    return;
+  }
+  tl.innerHTML = state.trajectory.sessions.map(function (s) {
+    var ts = new Date((s.ts || 0) * 1000).toLocaleTimeString();
+    var visits = (s.visits || []).map(function (v) {
+      var seg = state.zoneName(v.zone_id) + " " + Math.round(v.duration_s || 0) + "s";
+      if (v.exercise && v.reps) seg += " · " + v.exercise + " ×" + v.reps;
+      return seg;
+    }).join(" → ");
+    var who = s.member_id || s.tracker_id || "?";
+    var line = visits + " (" + Math.round(s.duration_s || 0) + "s total, " +
+      Math.round(s.transit_s || 0) + "s transit)";
+    return '<li><span class="a-tag session">' + who + "</span><span>" + line +
+      '</span><span class="a-time">' + ts + "</span></li>";
   }).join("");
 }
 
@@ -647,6 +761,68 @@ function syncPoseForVideoPts(videoPts90) {
   return { snap: before, persons: lerpPosePersons(before, after, t) };
 }
 
+// ── canvas helpers: zone path, rounded rect, zone badge ──
+function zonePath(ctx, poly, W, H) {
+  ctx.beginPath();
+  poly.forEach(function (pt, i) {
+    if (i === 0) ctx.moveTo(pt[0] * W, pt[1] * H);
+    else ctx.lineTo(pt[0] * W, pt[1] * H);
+  });
+  ctx.closePath();
+}
+
+// rounded-rect path (fallback for browsers without ctx.roundRect)
+function roundRectPath(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+// rounded chip at polygon bbox top-left: ● name  n/cap
+function zoneBadge(ctx, z, poly, W, H, color, count, isCrowd) {
+  var minX = 1, minY = 1;
+  poly.forEach(function (pt) {
+    if (pt[0] < minX) minX = pt[0];
+    if (pt[1] < minY) minY = pt[1];
+  });
+  var cap = z.capacity || 0;
+  var txt = count != null
+    ? (cap ? count + "/" + cap : "" + count)
+    : (cap ? "0/" + cap : "");
+  ctx.save();
+  ctx.font = "11px sans-serif";
+  var nameW = ctx.measureText(z.name).width;
+  ctx.font = "bold 12px monospace";
+  var cntW = txt ? ctx.measureText(txt).width : 0;
+  var padX = 8, dotR = 3.5, chipH = 22;
+  var chipW = padX + dotR * 2 + 7 + nameW + (txt ? 8 + cntW : 0) + padX;
+  var bx = minX * W + 10, by = minY * H + 10;
+  if (bx + chipW > W - 4) bx = Math.max(4, W - 4 - chipW);
+  if (by + chipH > H - 4) by = Math.max(4, H - 4 - chipH);
+  roundRectPath(ctx, bx, by, chipW, chipH, 6);
+  ctx.fillStyle = "rgba(8,11,15,0.75)";
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(bx + padX + dotR, by + chipH / 2, dotR, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "#e6ebf2";
+  ctx.font = "11px sans-serif";
+  ctx.fillText(z.name, bx + padX + dotR * 2 + 7, by + chipH / 2 + 0.5);
+  if (txt) {
+    ctx.font = "bold 12px monospace";
+    ctx.fillStyle = isCrowd ? "#ff5d5d" : "#e6ebf2";
+    ctx.textAlign = "right";
+    ctx.fillText(txt, bx + chipW - padX, by + chipH / 2 + 0.5);
+  }
+  ctx.restore();
+}
+
 function drawOverlay(persons, zones) {
   var cv = $("pose-canvas");
   if (!cv) return;
@@ -655,44 +831,54 @@ function drawOverlay(persons, zones) {
   ctx.clearRect(0, 0, W, H);
   if (!persons.length && !zones) return;
 
-  // ── zone polygons ──
+  // ── zone polygons: per-zone soft identity color + rounded badge ──
+  // light tint fill (0.10; 0.18 crowded) + 2px same-color border keeps the
+  // zone readable without washing out the video underneath
   if (zones) {
     var crowded = {};
     (zones.crowded || []).forEach(function (id) { crowded[id] = true; });
+    var counts = zones.counts || {};
     state.zones.forEach(function (z) {
       var poly = z.polygon;
       if (!poly || poly.length < 3) return;
       var isCrowd = !!crowded[z.id];
-      // fill with alpha
+      var color = z.forbidden ? "#f5b342"
+        : (isCrowd ? "#ff5d5d" : (z.color || "#6ea8ff"));
+      zonePath(ctx, poly, W, H);
       ctx.save();
-      ctx.globalAlpha = 0.15;
-      ctx.fillStyle = isCrowd ? "#ff5d5d" : "#00ff00";
-      ctx.beginPath();
-      poly.forEach(function (pt, i) {
-        if (i === 0) ctx.moveTo(pt[0] * W, pt[1] * H);
-        else ctx.lineTo(pt[0] * W, pt[1] * H);
-      });
-      ctx.closePath();
+      ctx.globalAlpha = isCrowd ? 0.18 : 0.10;
+      ctx.fillStyle = color;
       ctx.fill();
       ctx.restore();
-      // stroke
-      ctx.strokeStyle = isCrowd ? "#ff5d5d" : "#00ff00";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      poly.forEach(function (pt, i) {
-        if (i === 0) ctx.moveTo(pt[0] * W, pt[1] * H);
-        else ctx.lineTo(pt[0] * W, pt[1] * H);
-      });
-      ctx.closePath();
-      ctx.stroke();
-      // label
-      if (poly.length > 0) {
-        var lx = poly[0][0] * W + 4, ly = poly[0][1] * H + 4;
-        var label = z.name;
-        if (z.capacity) label += (isCrowd ? " !" : "") + " " + z.capacity;
-        ctx.font = "12px sans-serif";
-        ctx.fillStyle = "#fff";
-        ctx.fillText(label, lx, ly);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = isCrowd ? 3 : 2;
+      if (z.forbidden) {
+        ctx.save();
+        ctx.setLineDash([8, 6]);
+        ctx.stroke();
+        ctx.restore();
+      } else {
+        ctx.stroke();
+      }
+      zoneBadge(ctx, z, poly, W, H, color, counts[z.id], isCrowd);
+    });
+  }
+
+  // ── motion trails (client-side fading polyline, mirrors overlay.py draw_trail) ──
+  if (state.trajectory.enabled) {
+    var trails = state.trajectory.trails || {};
+    Object.keys(trails).forEach(function (tid) {
+      var pts = trails[tid];
+      if (!pts || pts.length < 2) return;
+      var n = pts.length - 1;
+      for (var i = 0; i < n; i++) {
+        var t = (i + 1) / n;   // 0 = oldest, 1 = newest
+        ctx.strokeStyle = "rgba(255,200,80," + (0.2 + 0.65 * t).toFixed(3) + ")";
+        ctx.lineWidth = 1 + 2 * t;
+        ctx.beginPath();
+        ctx.moveTo(pts[i][0] * W, pts[i][1] * H);
+        ctx.lineTo(pts[i + 1][0] * W, pts[i + 1][1] * H);
+        ctx.stroke();
       }
     });
   }
@@ -742,7 +928,11 @@ function drawOverlay(persons, zones) {
   if (zones) {
     var parts = ["total=" + (zones.total || 0)];
     var counts = zones.counts || {};
-    Object.keys(counts).forEach(function (id) { parts.push(id + "=" + counts[id]); });
+    Object.keys(counts).forEach(function (id) {
+      var nm = state.zoneName(id);
+      if (nm.length > 14) nm = nm.slice(0, 13) + "…";  // keep the bar on one line
+      parts.push(nm + " " + counts[id]);
+    });
     // Show the *measured* stream fps (from the MSE player's PTS timing) so the
     // bar reflects actual throughput, distinct from the header's Target FPS.
     var measured = state.hd && state.hd.getFps ? state.hd.getFps() : null;
@@ -750,6 +940,7 @@ function drawOverlay(persons, zones) {
     if (measured != null && measured > 0) parts.push(measured + "fps");
     else if (target != null) parts.push(target + "fps");
     var barText = "  " + parts.join("  ");
+    ctx.font = "11px monospace";
     var bw = ctx.measureText(barText).width;
     ctx.fillStyle = "rgba(0,0,0,0.7)";
     ctx.fillRect(4, H - 28, bw + 8, 20);
@@ -807,8 +998,19 @@ function setMode(mode) {
     ctx.clearRect(0, 0, cv.width || 1, cv.height || 1);
     img.style.display = "";
     empty.classList.add("hide");
-    img.src = appUrl("/stream") + "?t=" + Date.now();
+    var src = appUrl("/stream");
+    src += (state.degraded && state.streamFps ? "?fps=" + state.streamFps + "&" : "?") + "t=" + Date.now();
+    img.src = src;
   }
+}
+
+// HD player keeps retrying, but when the link cannot sustain H.264+MSE it
+// calls onDegrade → drop to throttled MJPEG (SSE overlay keeps working).
+function degradeToMjpeg(reason) {
+  state.streamFps = 4;
+  state.degraded = true;
+  setMode("mjpeg");
+  $("video-hint").textContent = "Network is slow (" + reason + ") — switched to smooth mode; click HD to retry";
 }
 
 function startHdVideo(startText, opts) {
@@ -817,13 +1019,17 @@ function startHdVideo(startText, opts) {
     if (!d || !d.wsUrl) { $("video-empty").textContent = "HD preview is disabled; PLATFORM_API_TOKEN is required"; $("video-empty").classList.remove("hide"); return; }
     if (!window.MediaSource) { $("video-empty").textContent = "This browser does not support MSE"; $("video-empty").classList.remove("hide"); return; }
     if (state.hd) state.hd.stop();
-    state.hd = createHdPlayer($("hd-video"), opts);
+    var hdOpts = {};
+    if (opts) for (var k in opts) hdOpts[k] = opts[k];
+    hdOpts.onDegrade = degradeToMjpeg;
+    state.hd = createHdPlayer($("hd-video"), hdOpts);
     state.hd.start(d.wsUrl);
     $("video-empty").classList.add("hide");
   }).catch(function () { $("video-empty").textContent = "Failed to load preview information"; $("video-empty").classList.remove("hide"); });
 }
 
 function enterHd() {
+  state.degraded = false;   // manual retry: give HD a fresh chance
   startHdVideo("HD preview is live");
 }
 
@@ -841,6 +1047,7 @@ function uploadVideo(file) {
       $("video-hint").textContent = "Playing: " + (d.path || "");
       $("btn-stop-video").disabled = false;
       state.videoMode = true;
+      state.degraded = false;  // uploaded clip is server-baked; no stream throttle
       if (state.mode !== "mjpeg") setMode("mjpeg");   // uploaded clip is MJPEG-only
       else $("pose-canvas").style.display = "none";
     } else { $("video-hint").textContent = "Upload failed: " + (d.error || ""); }
@@ -865,6 +1072,11 @@ function boot() {
 
   $("btn-hd").addEventListener("click", function () { setMode("hd"); });
   $("btn-mjpeg").addEventListener("click", function () { setMode("sync"); });
+  $("btn-trail").addEventListener("click", function () {
+    state.trajectory.enabled = !state.trajectory.enabled;
+    this.classList.toggle("active", state.trajectory.enabled);
+    this.textContent = state.trajectory.enabled ? "Trail" : "Trail Off";
+  });
 
   var video = $("hd-video"), cv = $("pose-canvas"), img = $("mjpeg-img");
   // size pose canvas to the video's intrinsic resolution once known
