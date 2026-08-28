@@ -9,7 +9,7 @@ __pycache__/
 *.egg-info/
 build/
 dist/
-*.aipc
+*.nrt
 *.tar
 *.tar.*
 *.whl

@@ -2,7 +2,7 @@
 # Unified app build script for AIPC platform
 # Usage: ./scripts/build_app.sh <app-dir> [--arch arm64|amd64] [--output ./dist]
 #
-# Automates: SDK install → docker build → save image → package .aipc → cleanup
+# Automates: SDK install → docker build → save image → package .nrt → cleanup
 #
 # The SDK is installed from PyPI: neoruntime-ipc-sdk==$SDK_VERSION, where the
 # version resolves via scripts/resolve_sdk_version.sh — sdk.lock by default,
@@ -23,7 +23,7 @@ usage() {
     echo ""
     echo "  app-directory   Path to app directory containing Dockerfile and app.yaml"
     echo "  --arch          Target architecture (default: arm64)"
-    echo "  --output        Output directory for .aipc package (default: app directory)"
+    echo "  --output        Output directory for .nrt package (default: app directory)"
     exit 1
 }
 
@@ -91,21 +91,28 @@ echo "Exporting image..."
 IMAGE_TAR="$APP_DIR/image.tar"
 docker save "$IMAGE_TAG" -o "$IMAGE_TAR"
 
-# Package
-echo "Creating .aipc package..."
-AIPC_PACKAGE="$OUTPUT_DIR/${APP_NAME}.aipc"
-rm -f "$AIPC_PACKAGE"
-(cd "$APP_DIR" && zip -r "$AIPC_PACKAGE" app.yaml image.tar)
-
-# Cleanup
-rm -f "$IMAGE_TAR"
+# Package (.nrt = tar.gz bundle with the same layout as showcase bundles:
+# <app>-<version>-<arch>/{app.yaml, image.tar, SHA256SUMS} — one package
+# format for web import and CLI install).
+echo "Creating .nrt package..."
+PACKAGE_DIR="${APP_NAME}-${VERSION}-${ARCH}"
+NRT_PACKAGE="$OUTPUT_DIR/${PACKAGE_DIR}.nrt"
+STAGING_ROOT="$OUTPUT_DIR/.tmp-nrt-staging"
+STAGING="$STAGING_ROOT/$PACKAGE_DIR"
+rm -rf "$STAGING_ROOT"
+mkdir -p "$STAGING"
+cp "$APP_YAML" "$STAGING/app.yaml"
+mv "$IMAGE_TAR" "$STAGING/image.tar"
+(cd "$STAGING" && sha256sum * > SHA256SUMS)
+tar -C "$STAGING_ROOT" -czf "$NRT_PACKAGE" "$PACKAGE_DIR"
+rm -rf "$STAGING_ROOT"
 
 echo ""
 echo "============================================"
 echo "  Build complete!"
-echo "  Package: $AIPC_PACKAGE"
-echo "  Size: $(du -h "$AIPC_PACKAGE" | cut -f1)"
+echo "  Package: $NRT_PACKAGE"
+echo "  Size: $(du -h "$NRT_PACKAGE" | cut -f1)"
 echo "============================================"
 echo ""
 echo "To install on device:"
-echo "  aipc-cli app install <app-id> app.yaml image.tar"
+echo "  tar xzf ${PACKAGE_DIR}.nrt && aipc-cli app install <app-id> ${PACKAGE_DIR}/app.yaml ${PACKAGE_DIR}/image.tar"

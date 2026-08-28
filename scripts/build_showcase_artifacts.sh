@@ -136,8 +136,8 @@ for showcase in "${SHOWCASES[@]}"; do
 
     BUNDLE_NAME="${APP_NAME}-${VERSION}-${ARCH}"
     BUNDLE_DIR="$OUTPUT_ROOT/$BUNDLE_NAME"
-    IMAGE_TAR="$BUNDLE_DIR/${APP_NAME}-image.tar"
-    BUNDLE_TGZ="$OUTPUT_ROOT/${BUNDLE_NAME}.tar.gz"
+    IMAGE_TAR="$BUNDLE_DIR/image.tar"
+    BUNDLE_NRT="$OUTPUT_ROOT/${BUNDLE_NAME}.nrt"
 
     echo "============================================"
     echo "  Building $APP_NAME $VERSION for linux/$ARCH"
@@ -145,7 +145,7 @@ for showcase in "${SHOWCASES[@]}"; do
     echo "  SDK: neoruntime-ipc-sdk ${SDK_VERSION} ($(if [ -n "${AIPC_SDK_VERSION:-}" ]; then echo AIPC_SDK_VERSION; else echo sdk.lock; fi))"
     echo "============================================"
 
-    rm -rf "$BUNDLE_DIR" "$BUNDLE_TGZ"
+    rm -rf "$BUNDLE_DIR" "$BUNDLE_NRT"
     mkdir -p "$BUNDLE_DIR"
 
     # Stage models (zoo fetch, sha256-pinned via models.manifest; no-op
@@ -173,16 +173,16 @@ for showcase in "${SHOWCASES[@]}"; do
     shopt -u nullglob
 
     cat > "$BUNDLE_DIR/README.txt" <<EOF
-$APP_NAME showcase bundle
+$APP_NAME showcase bundle (.nrt)
 
 Image:
   $IMAGE_TAG
 
 Install:
-  aipc-cli app install app.yaml ${APP_NAME}-image.tar
+  aipc-cli app install app.yaml image.tar
 
 Manual image import:
-  ctr -n aipc images import ${APP_NAME}-image.tar
+  ctr -n aipc images import image.tar
 EOF
 
     (
@@ -190,7 +190,7 @@ EOF
         sha256sum * > SHA256SUMS
     )
 
-    tar -C "$OUTPUT_ROOT" -czf "$BUNDLE_TGZ" "$BUNDLE_NAME"
+    tar -C "$OUTPUT_ROOT" -czf "$BUNDLE_NRT" "$BUNDLE_NAME"
 
-    echo "Bundle: $BUNDLE_TGZ"
+    echo "Bundle: $BUNDLE_NRT"
 done

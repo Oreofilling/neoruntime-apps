@@ -35,7 +35,7 @@ cd <person-detection-app-dir>
 ./build.sh arm64
 ```
 
-The build creates `person-detection.aipc`.
+The build creates `person-detection-1.0.0-arm64.nrt`.
 
 ### Option 2: Build manually
 
@@ -47,8 +47,11 @@ docker buildx build --platform linux/arm64 -t aipc/person-detection:1.0.0 .
 # 2. Export the image
 docker save aipc/person-detection:1.0.0 -o image.tar
 
-# 3. Package the app
-zip person-detection.aipc app.yaml image.tar
+# 3. Package the app (.nrt = tar.gz with app.yaml + image.tar + SHA256SUMS)
+mkdir -p person-detection-1.0.0-arm64
+cp app.yaml image.tar person-detection-1.0.0-arm64/
+(cd person-detection-1.0.0-arm64 && sha256sum * > SHA256SUMS)
+tar -czf person-detection-1.0.0-arm64.nrt person-detection-1.0.0-arm64
 
 # 4. Clean up
 rm -f image.tar
@@ -58,7 +61,7 @@ rm -f image.tar
 
 1. Open app management.
 2. Click the install button.
-3. Choose `person-detection.aipc`.
+3. Choose the `person-detection-1.0.0-arm64.nrt` package.
 4. Confirm the parsed manifest values.
 5. Complete the installation and wait for the app to appear in the list.
 
@@ -269,9 +272,9 @@ permissions:
 TOKEN="Bearer <your-token-key>"
 BASE="http://192.0.2.72:8080/api/v1"
 
-# App management
+# App install: upload the .nrt package via the web console, or run the
+# upload-manifest → upload-image → install-package sequence (see README)
 curl -H "Authorization: $TOKEN" $BASE/apps
-curl -X POST -H "Authorization: $TOKEN" -F "app=@app.aipc" $BASE/apps
 curl -H "Authorization: $TOKEN" $BASE/apps/person-detection
 curl -X POST -H "Authorization: $TOKEN" $BASE/apps/person-detection/start
 curl -X POST -H "Authorization: $TOKEN" $BASE/apps/person-detection/stop

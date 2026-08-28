@@ -102,7 +102,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.showcase }}-${{ matrix.arch }}-bundle
-          path: apps/dist/showcases/${{ matrix.showcase }}-*.tar.gz
+          path: apps/dist/showcases/${{ matrix.showcase }}-*.nrt
           if-no-files-found: error
           retention-days: 14
 
@@ -134,7 +134,7 @@ jobs:
             printf 'Showcase application bundles for %s.\n' "$GITHUB_REF_NAME" > "$release_notes_file"
             create_flags=()
             edit_flags=()
-            cp release-assets/*.tar.gz upload-assets/
+            cp release-assets/*.nrt upload-assets/
           else
             release_tag="showcase-bundles-latest"
             release_title="Latest showcase bundles"
@@ -148,13 +148,13 @@ jobs:
               printf '| -------- | -------- |\n'
             } > "$release_notes_file"
 
-            for asset in release-assets/*.tar.gz; do
-              bundle_name="$(basename "$asset" .tar.gz)"
+            for asset in release-assets/*.nrt; do
+              bundle_name="$(basename "$asset" .nrt)"
               arch="${bundle_name##*-}"
               without_arch="${bundle_name%-${arch}}"
               version="${without_arch##*-}"
               app="${without_arch%-${version}}"
-              latest_name="${app}-latest-${arch}.tar.gz"
+              latest_name="${app}-latest-${arch}.nrt"
 
               cp "$asset" "upload-assets/$latest_name"
               printf '| `%s` | [`%s`](https://github.com/%s/releases/download/%s/%s) |\n' \
@@ -176,7 +176,7 @@ jobs:
                   done
             fi
 
-            gh release upload "$release_tag" upload-assets/*.tar.gz \
+            gh release upload "$release_tag" upload-assets/*.nrt \
               --repo "$GITHUB_REPOSITORY" \
               --clobber
             gh release edit "$release_tag" \
@@ -185,7 +185,7 @@ jobs:
               --notes-file "$release_notes_file" \
               "${edit_flags[@]}"
           else
-            gh release create "$release_tag" upload-assets/*.tar.gz \
+            gh release create "$release_tag" upload-assets/*.nrt \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "$release_title" \
