@@ -24,6 +24,9 @@ dist/
 # re-included below and committed.
 examples/*/models/*.hef
 showcases/*/models/*.hef
+!examples/object-detection/models/*.hef
+!examples/people-counting/models/*.hef
+!examples/person-detection/models/*.hef
 !showcases/parking-lot/models/*.hef
 !showcases/shelf-ops/models/*.hef
 !showcases/gym-ops/models/*.hef
