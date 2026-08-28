@@ -13,7 +13,7 @@
 |---|------|---------|---------|
 | 1 | 权限声明没人 get 到 | schema 齐全、**容器级真执行**（沙箱能力裁剪/dma_heap/host 网络），但**服务级 ACL 基本是 TODO**（只打日志）→ 声明了平台也不会拒绝什么 | apps：权限参考文档+模板注释；平台：3 个执行点接线 |
 | 2 | app 能否用自己的模型 | **已经支持**（`allow_register_model` → ai-runtime OwnerId → DB OwnerAppID → 卸载自动清理）。缺的是声明式依赖：安装时不校验模型在位，运行时才失败 | 平台：`spec.models` **alias 映射**（id/path）+ 安装时校验 |
-| 3 | 仓库依赖过大 | 唯一硬依赖是**构建期 SDK wheel**（干净克隆必挂）；模型、requirements.txt 均已解耦 | apps：wheel 内置 `third_party/`（见附录 A） |
+| 3 | 仓库依赖过大 | 唯一硬依赖是**构建期 SDK wheel**（干净克隆必挂）；模型、requirements.txt 均已解耦 | apps：SDK 从 PyPI 安装 `neoruntime-ipc-sdk`（已落地；早期过渡方案为 wheel 内置 `third_party/`，见附录 A，现已移除） |
 | 4 | 导入方式 2/3 能否统一 | 判断正确：**两条路最终同落点（`apps/manifests/<id>/app.yaml`）、同安装器（AsyncInstallApp）**，方式 2 就是方式 3 的可视化生成器 | 平台：upload-manifest 返回全量解析 + 向导 hydrate + YAML 保真回写 |
 
 ---
@@ -206,8 +206,11 @@ web 控制台 `web/src/pages/apps/components/ImportAppDialog.tsx` 三种来源�
    `scripts/build_showcase_artifacts.sh --arch arm64 --output dist/showcases shelf-ops`）
 2. 新增 `showcases/shelf-ops/.dockerignore`（gym-ops 模板 + 排除 tests/、
    docs/、tools/、.venv/、config.yaml*、`*.npy`）
-3. **wheel 内置**：`third_party/hailo_ipc_sdk-<ver>.whl`（82KB 纯 Python 包，
-   `git add -f`）+ 来源说明；`find_default_wheel()` 搜索序改为
+3. **wheel 内置**（历史方案，已被取代：`neoruntime-ipc-sdk` 已上架 PyPI，
+   镜像改为构建期 `pip install neoruntime-ipc-sdk==<ver>`，`third_party/`
+   与 `find_default_wheel()` 均已移除）：原做法为
+   `third_party/neoruntime_ipc_sdk-<ver>.whl`（82KB 纯 Python 包，
+   `git add -f`）+ 来源说明；`find_default_wheel()` 搜索序为
    `--wheel > third_party/ > dist/ > 兄弟仓库`。版本以已部署镜像实测
    `pip show hailo-ipc-sdk` 为准（候选 0.3.0 / 0.4.0）
 4. （可选）CI 删 SDK checkout/构建步骤与 `SDK_REPO_TOKEN`

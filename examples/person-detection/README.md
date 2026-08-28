@@ -90,7 +90,7 @@ permissions:
 ### AI inference
 
 ```python
-from hailo_ipc_sdk import InferenceClient
+from neoruntime_ipc_sdk import InferenceClient
 
 inf = InferenceClient()
 
@@ -107,7 +107,7 @@ for frame_seq, result in inf.subscribe(
 
 ```python
 import time
-from hailo_ipc_sdk import EventClient
+from neoruntime_ipc_sdk import EventClient
 
 events = EventClient()
 
@@ -120,7 +120,7 @@ events.publish("app/person-detection/detection", {
 ### Device control
 
 ```python
-from hailo_ipc_sdk import DeviceClient
+from neoruntime_ipc_sdk import DeviceClient
 
 device = DeviceClient()
 

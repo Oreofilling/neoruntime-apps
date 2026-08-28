@@ -12,7 +12,7 @@ import time
 import logging
 import threading
 
-from hailo_ipc_sdk import InferenceClient
+from neoruntime_ipc_sdk import InferenceClient
 
 from .stats_collector import StatsCollector
 from .benchmark import BenchmarkEngine

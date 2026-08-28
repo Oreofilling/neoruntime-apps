@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build script for Face Cascade Application
+# Build script for People Counting Application
 # Uses the shared build_app.sh helper
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

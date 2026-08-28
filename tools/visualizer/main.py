@@ -26,7 +26,7 @@ from socketserver import ThreadingMixIn
 import numpy as np
 
 # AIPC SDK
-from hailo_ipc_sdk import FdMediaClient as MediaClient, EventClient, Frame
+from neoruntime_ipc_sdk import FdMediaClient as MediaClient, EventClient, Frame
 
 # OpenCV for drawing
 try:

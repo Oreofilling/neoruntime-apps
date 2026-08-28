@@ -13,7 +13,7 @@ from flask import Flask, Response, request, jsonify, render_template
 # Raw protobuf: ListModels returns empty inputs/outputs, and the SDK
 # ModelInfo wrapper drops them too. GetModelInfo (raw RPC) is the only path
 # that returns populated input tensor specs.
-import hailo_ipc_sdk.proto.inference_pb2 as inference_pb2
+import neoruntime_ipc_sdk.proto.inference_pb2 as inference_pb2
 
 from .stats_collector import StatsCollector
 from .benchmark import BenchmarkEngine

@@ -19,7 +19,7 @@
 验证环境：
 - 设备 `192.168.93.72`，SSH TCP 隧道 `-L 19050:127.0.0.1:19050` 通到 ai-runtime 的
   socat 转发（`0.0.0.0:19050`）。
-- 本地以 `PYTHONPATH=/tmp/sdkx` 引入纯 Python `hailo_ipc_sdk 0.3.0` SDK。
+- 本地以 `PYTHONPATH=/tmp/sdkx` 引入纯 Python `neoruntime_ipc_sdk 0.3.0` SDK。
 - HEF 已上传设备 `/data/aipc/models/yolo_world_v2s.hef`（27.6 MB）。
 
 ## 结论（逐项）
@@ -328,6 +328,6 @@ input_names=[...])` 输入-张量配对确定。注册后不 unregister（常驻
   2026-08-24（App 集成实测上线 + §8 路径 B 证伪 / 路径 A 网格计数）→
   2026-08-25（§9 v5.4.0 平反 + 逐件检测集成）
 - 设备：NE503 (192.168.93.72)，ai-runtime 经 socat 转发 19050
-- SDK：hailo_ipc_sdk 0.3.0（探针）/ 0.4.0（App，注意注册 kwarg 是
+- SDK：neoruntime_ipc_sdk 0.3.0（探针）/ 0.4.0（App，注意注册 kwarg 是
   `model_variant` 而非 `variant`）
 - HEF：`yolo_world_v2s.hef` v5.3.0（弃用）；`clip_vit_b_32_image_encoder_nv12.hef`（现役）

@@ -9,7 +9,7 @@ Modify this file to implement your custom logic.
 import time
 import signal
 import sys
-from hailo_ipc_sdk import InferenceClient, EventClient, DeviceClient, Config
+from neoruntime_ipc_sdk import InferenceClient, EventClient, DeviceClient, Config
 
 
 class TemplateApp:

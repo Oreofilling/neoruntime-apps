@@ -12,8 +12,10 @@ RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.l
 
 WORKDIR /app
 
-COPY .aipc-build/hailo_ipc_sdk-*.whl /tmp/
-RUN pip install --no-cache-dir /tmp/hailo_ipc_sdk-*.whl && rm -f /tmp/hailo_ipc_sdk-*.whl
+# SDK from PyPI, pinned via --build-arg SDK_VERSION by build_showcase_artifacts.sh;
+# the default only matters for a bare `docker build` without the helper.
+ARG SDK_VERSION=0.5.0
+RUN pip install --no-cache-dir "neoruntime-ipc-sdk==${SDK_VERSION}"
 
 COPY requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt
@@ -27,6 +29,11 @@ COPY config.py clip_classify.py vocab.py slots.py analytics.py \
 COPY assets/ /app/assets/
 COPY templates/ /app/templates/
 COPY static/ /app/static/
+
+# Bundled models (zoo clip via models.manifest + vendored yolo_world_v2s_540).
+# NOT /opt/aipc/models — app.yaml bind-mounts host /data/aipc/models there,
+# which would shadow image content on device.
+COPY models/ /opt/aipc/bundled-models/
 
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 RUN mkdir -p /app/uploads && chown appuser:appuser /app/uploads

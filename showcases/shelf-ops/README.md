@@ -14,7 +14,7 @@ person/vehicle/face），v5.4.0 经 uint16 双输入契约**平反**（§9）—
    → 缺货/补货事件 + 时间桶热力图
 ```
 
-运行于 NeoRuntime / NE503 平台，与 gym-ops 同构：Flask + hailo_ipc_sdk +
+运行于 NeoRuntime / NE503 平台，与 gym-ops 同构：Flask + neoruntime_ipc_sdk +
 app.yaml + Docker + 单元测试 + 自动 bundle CI。
 
 ## 功能一览

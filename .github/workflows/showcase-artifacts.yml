@@ -8,13 +8,11 @@ on:
       - "v*"
     paths:
       - "showcases/**"
-      - "third_party/**"
       - "scripts/build_showcase_artifacts.sh"
       - ".github/workflows/showcase-artifacts.yml"
   pull_request:
     paths:
       - "showcases/**"
-      - "third_party/**"
       - "scripts/build_showcase_artifacts.sh"
       - ".github/workflows/showcase-artifacts.yml"
   workflow_dispatch:

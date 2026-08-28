@@ -42,7 +42,7 @@ DEFAULT_OUT = APP_DIR / "assets" / "vocab_embeddings_f32.npy"
 
 
 def _device_encode(text: str) -> np.ndarray:
-    from hailo_ipc_sdk.inference import InferenceClient
+    from neoruntime_ipc_sdk.inference import InferenceClient
 
     endpoint = os.environ.get("AI_RUNTIME_ENDPOINT",
                               "unix:///run/aipc/ai-runtime.sock")

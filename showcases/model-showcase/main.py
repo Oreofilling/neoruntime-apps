@@ -39,7 +39,7 @@ from flask import Flask, render_template, request, jsonify, Response
 from flask_sock import Sock
 from PIL import Image, ImageDraw, ImageFont
 
-from hailo_ipc_sdk import (
+from neoruntime_ipc_sdk import (
     FdMediaClient,
     InferenceClient,
     BatchInferItem,

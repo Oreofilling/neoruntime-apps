@@ -187,7 +187,7 @@ permissions:
 ### AI Inference
 
 ```python
-from hailo_ipc_sdk import InferenceClient
+from neoruntime_ipc_sdk import InferenceClient
 
 inf = InferenceClient()
 
@@ -200,7 +200,7 @@ for frame, result in inf.subscribe("cam0_main", "person_v1", fps=10):
 ### Device Control
 
 ```python
-from hailo_ipc_sdk import DeviceClient, IrCutMode
+from neoruntime_ipc_sdk import DeviceClient, IrCutMode
 
 dev = DeviceClient()
 
@@ -217,7 +217,7 @@ dev.pan_left(speed=50)
 ### Event Publishing
 
 ```python
-from hailo_ipc_sdk import EventClient
+from neoruntime_ipc_sdk import EventClient
 
 events = EventClient()
 
@@ -264,7 +264,7 @@ for event in events.subscribe("model/*/detections"):
 ### Zone-Based Detection
 
 ```python
-from hailo_ipc_sdk import Zone
+from neoruntime_ipc_sdk import Zone
 
 zone_a = Zone("entrance", [(0.1, 0.5), (0.9, 0.5), (0.9, 1.0), (0.1, 1.0)])
 

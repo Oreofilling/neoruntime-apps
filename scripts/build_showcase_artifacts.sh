@@ -9,7 +9,6 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 ARCH="arm64"
 OUTPUT_ROOT="$PROJECT_ROOT/dist/showcases"
-WHEEL_PATH=""
 SHOWCASES=()
 
 usage() {
@@ -19,12 +18,9 @@ Usage: scripts/build_showcase_artifacts.sh [options] [showcase...]
 Options:
   --arch arm64|amd64     Target container platform architecture (default: arm64)
   --output <dir>         Output directory for bundles (default: dist/showcases)
-  --wheel <path>         Python SDK wheel to stage into each Docker build context
-                         (default resolution: third_party/ > dist/ > sibling SDK repos)
   -h, --help             Show this help
 
 Examples:
-  scripts/build_showcase_artifacts.sh --wheel ../neoruntime-sdks/python/dist/hailo_ipc_sdk-0.3.0-py3-none-any.whl
   scripts/build_showcase_artifacts.sh model-showcase parking-lot --arch arm64 --output dist/showcases
 USAGE
 }
@@ -37,10 +33,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         --output)
             OUTPUT_ROOT="${2:-}"
-            shift 2
-            ;;
-        --wheel)
-            WHEEL_PATH="${2:-}"
             shift 2
             ;;
         -h|--help)
@@ -73,40 +65,8 @@ if [ -z "$OUTPUT_ROOT" ]; then
     exit 1
 fi
 
-find_default_wheel() {
-    # Priority order: vendored wheel first so clean clones build with no
-    # sibling SDK repos; dist/ and sibling repos remain as fallbacks.
-    local bases=(
-        "$PROJECT_ROOT/third_party"
-        "$PROJECT_ROOT/dist"
-        "$PROJECT_ROOT/../neoruntime-sdks/python/dist"
-        "$PROJECT_ROOT/../ne503-aipc-sdks/python/dist"
-    )
-
-    local base wheels=()
-    shopt -s nullglob
-    for base in "${bases[@]}"; do
-        wheels=("$base"/hailo_ipc_sdk-*.whl)
-        if [ "${#wheels[@]}" -gt 0 ]; then
-            printf '%s\n' "${wheels[@]}" | sort -V | tail -n 1
-            shopt -u nullglob
-            return
-        fi
-    done
-    shopt -u nullglob
-
-    echo "No SDK wheel found. Vendor one into third_party/ or pass --wheel <path>." >&2
-    exit 1
-}
-
-if [ -z "$WHEEL_PATH" ]; then
-    WHEEL_PATH="$(find_default_wheel)"
-fi
-
-if [ ! -f "$WHEEL_PATH" ]; then
-    echo "SDK wheel not found: $WHEEL_PATH" >&2
-    exit 1
-fi
+# SDK version: latest release on PyPI, or AIPC_SDK_VERSION to pin.
+SDK_VERSION="$("$SCRIPT_DIR/resolve_sdk_version.sh")"
 
 if [ "${#SHOWCASES[@]}" -eq 0 ]; then
     for app_dir in "$PROJECT_ROOT"/showcases/*; do
@@ -178,20 +138,29 @@ for showcase in "${SHOWCASES[@]}"; do
     BUNDLE_DIR="$OUTPUT_ROOT/$BUNDLE_NAME"
     IMAGE_TAR="$BUNDLE_DIR/${APP_NAME}-image.tar"
     BUNDLE_TGZ="$OUTPUT_ROOT/${BUNDLE_NAME}.tar.gz"
-    STAGE_DIR="$APP_DIR/.aipc-build"
 
     echo "============================================"
     echo "  Building $APP_NAME $VERSION for linux/$ARCH"
     echo "  Image: $IMAGE_TAG"
+    echo "  SDK: neoruntime-ipc-sdk ${SDK_VERSION} (PyPI)"
     echo "============================================"
 
-    rm -rf "$BUNDLE_DIR" "$BUNDLE_TGZ" "$STAGE_DIR"
-    mkdir -p "$BUNDLE_DIR" "$STAGE_DIR"
-    cp "$WHEEL_PATH" "$STAGE_DIR/"
+    rm -rf "$BUNDLE_DIR" "$BUNDLE_TGZ"
+    mkdir -p "$BUNDLE_DIR"
+
+    # Stage models (zoo fetch, sha256-pinned via models.manifest; no-op
+    # otherwise — vendored artifacts are committed and left untouched).
+    # Must run before docker buildx: the Dockerfile COPYs models/ into the
+    # image so bundles are plug-and-play on fresh devices.
+    if [ -f "$APP_DIR/models.manifest" ]; then
+        echo "[$APP_NAME] Staging models..."
+        "$PROJECT_ROOT/scripts/fetch_models.sh" "$APP_DIR"
+    fi
 
     docker buildx build \
         --platform "linux/$ARCH" \
         --load \
+        --build-arg SDK_VERSION="$SDK_VERSION" \
         -t "$IMAGE_TAG" \
         "$APP_DIR"
 
@@ -222,7 +191,6 @@ EOF
     )
 
     tar -C "$OUTPUT_ROOT" -czf "$BUNDLE_TGZ" "$BUNDLE_NAME"
-    rm -rf "$STAGE_DIR"
 
     echo "Bundle: $BUNDLE_TGZ"
 done

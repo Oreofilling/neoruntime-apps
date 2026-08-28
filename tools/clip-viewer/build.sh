@@ -13,18 +13,15 @@ echo "============================================"
 echo "  Building ${APP_NAME}:${VERSION} for ${ARCH}"
 echo "============================================"
 
-# Copy SDK
-echo "Copying SDK..."
-cp -r "${SCRIPT_DIR}/../../sdk/python/hailo_ipc_sdk" "${SCRIPT_DIR}/"
-cp "${SCRIPT_DIR}/../../sdk/python/setup.py" "${SCRIPT_DIR}/"
-cp "${SCRIPT_DIR}/../../sdk/python/README.md" "${SCRIPT_DIR}/"
+# SDK comes from PyPI inside the Dockerfile (pinned via SDK_VERSION build-arg)
+SDK_VERSION="$("${SCRIPT_DIR}/../../scripts/resolve_sdk_version.sh")"
 
 # Build Docker image
 echo "Building Docker image..."
 if [ "$ARCH" = "arm64" ]; then
-    docker buildx build --platform linux/arm64 --load -t "aipc/${APP_NAME}:${VERSION}" .
+    docker buildx build --platform linux/arm64 --load --build-arg SDK_VERSION="${SDK_VERSION}" -t "aipc/${APP_NAME}:${VERSION}" .
 else
-    docker build -t "aipc/${APP_NAME}:${VERSION}" .
+    docker build --build-arg SDK_VERSION="${SDK_VERSION}" -t "aipc/${APP_NAME}:${VERSION}" .
 fi
 
 # Export image
@@ -37,7 +34,7 @@ rm -f "${APP_NAME}.aipc"
 zip -r "${APP_NAME}.aipc" app.yaml image.tar
 
 # Cleanup
-rm -rf hailo_ipc_sdk setup.py README.md image.tar
+rm -f image.tar
 
 echo ""
 echo "============================================"

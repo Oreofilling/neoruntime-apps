@@ -9,8 +9,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY hailo_ipc_sdk-0.3.0-py3-none-any.whl /app/
-RUN pip install --no-cache-dir /app/hailo_ipc_sdk-0.3.0-py3-none-any.whl
+# SDK from PyPI (pinned via SDK_VERSION build-arg; default for bare docker build)
+ARG SDK_VERSION=0.5.0
+RUN pip install --no-cache-dir "neoruntime-ipc-sdk==${SDK_VERSION}"
 
 COPY requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt

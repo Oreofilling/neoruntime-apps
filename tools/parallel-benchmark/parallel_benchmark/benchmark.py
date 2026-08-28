@@ -22,12 +22,12 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
-from hailo_ipc_sdk import InferenceClient, BatchInferItem
+from neoruntime_ipc_sdk import InferenceClient, BatchInferItem
 
 # Raw protobuf is needed because the SDK convenience wrapper does not surface
 # per-input tensor specs (it drops inputs/outputs). Importing at module load is
 # part of the installed wheel contract.
-import hailo_ipc_sdk.proto.inference_pb2 as inference_pb2  # noqa: E402
+import neoruntime_ipc_sdk.proto.inference_pb2 as inference_pb2  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

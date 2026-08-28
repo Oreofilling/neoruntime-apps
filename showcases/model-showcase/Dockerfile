@@ -22,8 +22,10 @@ RUN set -e; \
 
 WORKDIR /app
 
-COPY .aipc-build/hailo_ipc_sdk-*.whl /tmp/
-RUN pip install --no-cache-dir /tmp/hailo_ipc_sdk-*.whl && rm -f /tmp/hailo_ipc_sdk-*.whl
+# SDK from PyPI, pinned via --build-arg SDK_VERSION by build_showcase_artifacts.sh;
+# the default only matters for a bare `docker build` without the helper.
+ARG SDK_VERSION=0.5.0
+RUN pip install --no-cache-dir "neoruntime-ipc-sdk==${SDK_VERSION}"
 
 COPY requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt

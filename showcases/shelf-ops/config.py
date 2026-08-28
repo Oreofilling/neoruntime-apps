@@ -11,7 +11,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
-from hailo_ipc_sdk.config import Config
+from neoruntime_ipc_sdk.config import Config
 
 from slots import EMPTY_CODE, build_grid_slots
 
@@ -241,14 +241,31 @@ class ShelfConfig:
     def clip_def(self) -> ModelDef:
         return MODEL_DEFS[self.clip_model]
 
+    # Models bundled in the image (flat layout; see Dockerfile). NOT
+    # /opt/aipc/models — app.yaml bind-mounts host /data/aipc/models there,
+    # which would shadow image content on device.
+    _BUNDLED_MODEL_ROOT = "/opt/aipc/bundled-models"
+
+    def _resolve_model_path(self, rel: str) -> str:
+        """Host-provisioned copy first; image-bundled fallback otherwise.
+
+        Devices that pre-provision /data/aipc/models keep using their own
+        copy; fresh installs fall back to the file bundled in the image so
+        installs are plug-and-play.
+        """
+        host = os.path.join(self.model_root, rel)
+        if os.path.isfile(host):
+            return host
+        return os.path.join(self._BUNDLED_MODEL_ROOT, os.path.basename(rel))
+
     def clip_full_path(self) -> str:
-        return os.path.join(self.model_root, self.clip_def().path)
+        return self._resolve_model_path(self.clip_def().path)
 
     def detect_def(self) -> ModelDef:
         return MODEL_DEFS[self.detect_model]
 
     def detect_full_path(self) -> str:
-        return os.path.join(self.model_root, self.detect_def().path)
+        return self._resolve_model_path(self.detect_def().path)
 
     def grid_dict(self) -> dict:
         """Grid params for /api/config and the frontend overlay."""

@@ -44,10 +44,10 @@ import cv2
 import numpy as np
 from flask import Flask, Response, jsonify, render_template, request
 
-from hailo_ipc_sdk.app import AppClient
-from hailo_ipc_sdk.config import Config
-from hailo_ipc_sdk.inference import InferenceClient
-from hailo_ipc_sdk.media import FdMediaClient
+from neoruntime_ipc_sdk.app import AppClient
+from neoruntime_ipc_sdk.config import Config
+from neoruntime_ipc_sdk.inference import InferenceClient
+from neoruntime_ipc_sdk.media import FdMediaClient
 
 from alerts import AlertBroker
 from analytics import ShelfAnalytics

@@ -46,30 +46,55 @@ containerized AIPC apps.
 
 ## Development
 
-Install the vendored SDK wheel (see `third_party/`), then work inside one app
-directory at a time:
+Install the SDK from PyPI, then work inside one app directory at a time:
 
 ```bash
 cd examples/person-detection
 python -m venv .venv
 . .venv/bin/activate
-pip install ../../third_party/hailo_ipc_sdk-*.whl
+pip install neoruntime-ipc-sdk
 pip install -r requirements.txt
 python app.py
 ```
 
 Most apps include a `build.sh` script that packages a container image and
-application manifest for deployment to an NeoRuntime device.
+application manifest for deployment to an NeoRuntime device. Images install
+`neoruntime-ipc-sdk==<version>` from PyPI inside the Dockerfile; the version
+resolves to the latest release on PyPI at build time (`AIPC_SDK_VERSION`
+overrides to pin a specific one).
 
-Runtime credentials, device addresses, model files, and generated `.aipc`
-packages are intentionally not committed. Use environment variables and local
-deployment configuration for device-specific values.
+Runtime credentials, device addresses, and generated `.aipc` packages are
+intentionally not committed. Use environment variables and local deployment
+configuration for device-specific values. Model HEFs fetched from the Hailo
+model zoo are also uncommitted — see [Model Files](#model-files).
+
+### Model Files
+
+App images bundle their model dependencies so installs are plug-and-play on
+fresh devices — no manual `/data/aipc/models` provisioning step.
+
+- Each app lists its downloadable models in `models.manifest` (TSV:
+  `sha256<TAB>filename<TAB>url`). `scripts/fetch_models.sh <app-dir>`
+  downloads and verifies them into `<app-dir>/models/`; `build_app.sh` and
+  the showcase bundle build run it automatically.
+- HEFs with no public source (recompiled inputs, custom class sets) are
+  vendored directly in `<app-dir>/models/` and committed via `.gitignore`
+  negations.
+- Dockerfiles copy `models/` into the image. Apps whose `app.yaml`
+  bind-mounts the host model directory must copy to
+  `/opt/aipc/bundled-models` instead of `/opt/aipc/models`, or the mount
+  shadows the image content on device.
+- Apps resolve model paths host-first (`MODEL_ROOT`), falling back to the
+  bundled copy — devices that pre-provision models keep using their own.
+- `spec.models` entries that auto-register a model at install time are only
+  safe for models whose raw output needs no postprocess (embedding, depth)
+  or whose app re-registers it with a variant. See `docs/app-permissions.md`.
 
 ## Showcase Bundles
 
 Showcase bundles contain a Docker image tarball, `app.yaml`, companion YAML
 files, and checksums. GitHub Actions builds these bundles when showcase files
-or the vendored SDK wheel change, and tag builds attach the bundles to the
+or the build scripts change, and tag builds attach the bundles to the
 GitHub Release.
 
 To build locally, run the build script from any showcase directory (it wraps
@@ -80,10 +105,12 @@ cd showcases/shelf-ops
 ./build.sh
 ```
 
-The Python SDK wheel is vendored in `third_party/`, so a clean clone builds
-with no sibling SDK repositories or tokens (`--wheel` overrides, `dist/` and
-sibling SDK repos remain fallbacks). Builds do not need model files: models
-are mounted read-only from the device at runtime, never baked into images.
+The Python SDK (`neoruntime-ipc-sdk`) is installed from PyPI during the image
+build, so a clean clone needs no sibling SDK repositories or tokens
+(`AIPC_SDK_VERSION` pins a specific release). Models are fetched automatically at
+build time via each showcase's `models.manifest` and baked into the image
+(see [Model Files](#model-files)), so installed bundles run on fresh
+devices; device-provisioned copies still take precedence where present.
 
 To install a downloaded bundle on a device, extract it and run:
 

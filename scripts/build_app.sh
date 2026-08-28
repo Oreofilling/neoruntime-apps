@@ -2,18 +2,16 @@
 # Unified app build script for AIPC platform
 # Usage: ./scripts/build_app.sh <app-dir> [--arch arm64|amd64] [--output ./dist]
 #
-# Automates: copy SDK → docker build → save image → package .aipc → cleanup
+# Automates: SDK install → docker build → save image → package .aipc → cleanup
 #
-# SDK source defaults to the sibling neoruntime-sdks repo; override with AIPC_SDK_SRC.
-#
-#   AIPC_SDK_SRC=/path/to/neoruntime-sdks/python ./scripts/build_app.sh <app-dir>
+# The SDK is installed from PyPI: neoruntime-ipc-sdk==$SDK_VERSION, where the
+# version resolves to the latest release on PyPI (scripts/resolve_sdk_version.sh;
+# AIPC_SDK_VERSION overrides to pin).
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-SDK_SRC="${AIPC_SDK_SRC:-$(dirname "$PROJECT_ROOT")/neoruntime-sdks/python/hailo_ipc_sdk}"
-SDK_PYTHON_DIR="$(dirname "$SDK_SRC")"
 
 # Defaults
 ARCH="arm64"
@@ -49,6 +47,9 @@ fi
 APP_DIR="$(cd "$APP_DIR" && pwd)"
 APP_NAME="$(basename "$APP_DIR")"
 
+# SDK version: latest release on PyPI, or AIPC_SDK_VERSION to pin.
+SDK_VERSION="$("$SCRIPT_DIR/resolve_sdk_version.sh")"
+
 APP_YAML="$APP_DIR/app.yaml"
 if [ ! -f "$APP_YAML" ]; then
     echo "Error: app.yaml not found in $APP_DIR"
@@ -67,26 +68,22 @@ mkdir -p "$OUTPUT_DIR"
 echo "============================================"
 echo "  Building ${APP_NAME}:${VERSION} for ${ARCH}"
 echo "  Image: ${IMAGE_TAG}"
+echo "  SDK: neoruntime-ipc-sdk ${SDK_VERSION} (PyPI)"
 echo "============================================"
 
-# Stage SDK
-echo "Staging SDK..."
-SDK_STAGED=false
-if [ -d "$SDK_SRC" ]; then
-    cp -r "$SDK_SRC" "$APP_DIR/"
-    cp "$SDK_PYTHON_DIR/setup.py" "$APP_DIR/"
-    cp "$SDK_PYTHON_DIR/README.md" "$APP_DIR/"
-    SDK_STAGED=true
-else
-    echo "Warning: SDK source not found ($SDK_SRC), skipping staging"
+# Stage models (zoo fetch, sha256-pinned via models.manifest; no-op otherwise)
+if [ -f "$APP_DIR/models.manifest" ]; then
+    echo "Staging models..."
+    "$SCRIPT_DIR/fetch_models.sh" "$APP_DIR"
 fi
 
 # Build
 echo "Building Docker image..."
 if [ "$ARCH" = "arm64" ]; then
-    docker buildx build --platform linux/arm64 --load -t "$IMAGE_TAG" "$APP_DIR"
+    docker buildx build --platform linux/arm64 --load \
+        --build-arg SDK_VERSION="$SDK_VERSION" -t "$IMAGE_TAG" "$APP_DIR"
 else
-    docker build -t "$IMAGE_TAG" "$APP_DIR"
+    docker build --build-arg SDK_VERSION="$SDK_VERSION" -t "$IMAGE_TAG" "$APP_DIR"
 fi
 
 # Export
@@ -102,9 +99,6 @@ rm -f "$AIPC_PACKAGE"
 
 # Cleanup
 rm -f "$IMAGE_TAR"
-if [ "$SDK_STAGED" = true ]; then
-    rm -rf "$APP_DIR/hailo_ipc_sdk" "$APP_DIR/setup.py" "$APP_DIR/README.md"
-fi
 
 echo ""
 echo "============================================"

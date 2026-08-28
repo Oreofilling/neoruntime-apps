@@ -1,0 +1,2 @@
+# Python dependencies for People Counting Application
+# SDK is installed locally from the included package

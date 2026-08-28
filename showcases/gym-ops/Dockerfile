@@ -3,15 +3,19 @@ FROM python:3.11-slim-bookworm
 LABEL version="0.1.0"
 LABEL description="GymOps Pose Coach - gym pose analysis, counting, zone occupancy, safety alerts"
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# HTTPS apt sources: some build networks block plain-HTTP egress (deb.debian.org:80)
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get install -y --no-install-recommends \
     bash curl procps libglib2.0-0 libsm6 libxext6 libxrender1 \
     fonts-wqy-zenhei ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-COPY .aipc-build/hailo_ipc_sdk-*.whl /tmp/
-RUN pip install --no-cache-dir /tmp/hailo_ipc_sdk-*.whl && rm -f /tmp/hailo_ipc_sdk-*.whl
+# SDK from PyPI, pinned via --build-arg SDK_VERSION by build_showcase_artifacts.sh;
+# the default only matters for a bare `docker build` without the helper.
+ARG SDK_VERSION=0.5.0
+RUN pip install --no-cache-dir "neoruntime-ipc-sdk==${SDK_VERSION}"
 
 COPY requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt
@@ -24,9 +28,14 @@ COPY config.py pose.py counter.py zones.py alerts.py overlay.py \
      video_source.py tracker.py app.py \
      exercise_classifier.py equipment_stats.py \
      face_crop.py face_db.py \
-     audio_prompt.py access_control.py /app/
+     audio_prompt.py access_control.py trajectory.py /app/
 COPY templates/ /app/templates/
 COPY static/ /app/static/
+
+# Bundled models (zoo yolov8s_pose via models.manifest + vendored
+# hailo_yolov8n_384_640). NOT /opt/aipc/models — app.yaml bind-mounts host
+# /data/aipc/models there, which would shadow image content on device.
+COPY models/ /opt/aipc/bundled-models/
 
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 RUN mkdir -p /app/uploads && chown appuser:appuser /app/uploads

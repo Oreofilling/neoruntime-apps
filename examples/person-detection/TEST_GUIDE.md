@@ -40,18 +40,18 @@ The build creates `person-detection.aipc`.
 ### Option 2: Build manually
 
 ```bash
-# 1. Copy the SDK
-cp -r ../../sdk/python/hailo_ipc_sdk ./
-cp ../../sdk/python/setup.py ./
-
-# 2. Build the Docker image
+# 1. Build the Docker image (installs neoruntime-ipc-sdk from PyPI;
+#    --build-arg SDK_VERSION=<ver> pins a specific release)
 docker buildx build --platform linux/arm64 -t aipc/person-detection:1.0.0 .
 
-# 3. Export the image
+# 2. Export the image
 docker save aipc/person-detection:1.0.0 -o image.tar
 
-# 4. Package the app
+# 3. Package the app
 zip person-detection.aipc app.yaml image.tar
+
+# 4. Clean up
+rm -f image.tar
 ```
 
 ## 3. Install from the Web Console
@@ -160,7 +160,7 @@ ls -la /run/aipc/
 # device-control.sock
 
 # Import the SDK
-python3 -c "from hailo_ipc_sdk import InferenceClient; print('SDK OK')"
+python3 -c "from neoruntime_ipc_sdk import InferenceClient; print('SDK OK')"
 
 # Inspect app code and logs
 cat /app/app.py | head -50
@@ -171,7 +171,7 @@ Run a single inference test:
 
 ```bash
 python3 << 'EOF'
-from hailo_ipc_sdk import InferenceClient
+from neoruntime_ipc_sdk import InferenceClient
 import numpy as np
 
 inf = InferenceClient()
@@ -186,7 +186,7 @@ Publish a test event:
 
 ```bash
 python3 << 'EOF'
-from hailo_ipc_sdk import EventClient
+from neoruntime_ipc_sdk import EventClient
 import time
 
 events = EventClient()

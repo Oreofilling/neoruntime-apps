@@ -28,7 +28,7 @@ from typing import Optional, List, Dict, Any
 
 from flask import Flask, render_template, request, jsonify, Response
 
-from hailo_ipc_sdk import InferenceClient, Config
+from neoruntime_ipc_sdk import InferenceClient, Config
 
 # ---------------------------------------------------------------------------
 # Logging
