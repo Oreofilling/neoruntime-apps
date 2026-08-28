@@ -34,6 +34,21 @@ spec:
     - host: /data/aipc/etc/shelf-ops
       container: /data/aipc/etc/shelf-ops
 
+  # Bundled model dependencies (image /opt/aipc/bundled-models). Only the
+  # CLIP encoder is declared here: its raw-embedding output needs no
+  # postprocess, so a fresh-device transient registration (empty variant) is
+  # safe and the app treats "already registered" as benign. yolo_world_540
+  # stays OUT of spec.models — it needs the app's runtime registration
+  # (identity variant + declared dual inputs + app-side decode); an
+  # empty-variant transient registration would apply the default yolov8
+  # backend and break inference with no self-heal path.
+  models:
+    clip:
+      id: clip_vit_b_32
+      path: /opt/aipc/bundled-models/clip_vit_b_32_image_encoder_nv12.hef
+      type: embedding
+      required: true
+
   permissions:
     video:
       - main.raw
