@@ -59,13 +59,19 @@ python app.py
 Most apps include a `build.sh` script that packages a container image and
 application manifest for deployment to an NeoRuntime device. Images install
 `neoruntime-ipc-sdk==<version>` from PyPI inside the Dockerfile; the version
-resolves to the latest release on PyPI at build time (`AIPC_SDK_VERSION`
-overrides to pin a specific one).
+is pinned by `sdk.lock` at the repo root (reproducible, offline-friendly).
+Set `AIPC_SDK_VERSION=<version>` to build against a different release, or
+`AIPC_SDK_VERSION=latest` to float to the newest PyPI release. A weekly
+GitHub Actions probe canaries new SDK releases and opens a bump PR.
 
 Runtime credentials, device addresses, and generated `.aipc` packages are
 intentionally not committed. Use environment variables and local deployment
-configuration for device-specific values. Model HEFs fetched from the Hailo
-model zoo are also uncommitted — see [Model Files](#model-files).
+configuration for device-specific values. Model HEFs *are* committed (vendored
+per app via `.gitignore` negations) — see [Model Files](#model-files).
+
+Every example and showcase also builds in CI (arm64 via QEMU): examples build
+and pass an in-image smoke test (`scripts/smoke_image.sh`) on every change;
+showcases produce downloadable bundles — see [Showcase Bundles](#showcase-bundles).
 
 ### Model Files
 
@@ -78,7 +84,10 @@ fresh devices — no manual `/data/aipc/models` provisioning step.
   the showcase bundle build run it automatically.
 - HEFs with no public source (recompiled inputs, custom class sets) are
   vendored directly in `<app-dir>/models/` and committed via `.gitignore`
-  negations.
+  negations. All current apps — examples included — commit their HEFs this
+  way, so a clean clone builds fully offline; `models.manifest` still pins
+  the sha256 of every downloaded HEF so `fetch_models.sh` can verify or
+  refresh them from the zoo.
 - Dockerfiles copy `models/` into the image. Apps whose `app.yaml`
   bind-mounts the host model directory must copy to
   `/opt/aipc/bundled-models` instead of `/opt/aipc/models`, or the mount
@@ -105,11 +114,11 @@ cd showcases/shelf-ops
 ```
 
 The Python SDK (`neoruntime-ipc-sdk`) is installed from PyPI during the image
-build, so a clean clone needs no sibling SDK repositories or tokens
-(`AIPC_SDK_VERSION` pins a specific release). Models are fetched automatically at
-build time via each showcase's `models.manifest` and baked into the image
-(see [Model Files](#model-files)), so installed bundles run on fresh
-devices; device-provisioned copies still take precedence where present.
+build, so a clean clone needs no sibling SDK repositories or tokens (version
+pinned by `sdk.lock`; `AIPC_SDK_VERSION` overrides). Model HEFs are committed
+per showcase and verified against `models.manifest` at build time, so installed
+bundles run on fresh devices; device-provisioned copies still take precedence
+where present.
 
 To install a downloaded bundle on a device, extract it and run:
 
