@@ -1,5 +1,0 @@
-# Hailo model zoo compiles, pinned to v5.3.0/hailo15h (device firmware line).
-# Format: sha256 <TAB> filename <TAB> url   (fetched by scripts/fetch_models.sh)
-# The filename doubles as the model id the app subscribes to.
-557f080afe1dfb9cef02cfea81efc42ba33b8093e9e51cbafd9aae717a7d90e7	person_vehicle_v1.hef	https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/v5.3.0/hailo15h/yolov8n.hef
-9a915b0e0488ed6f5b9d108454d4ca1138d268b89a4468de06d434f8516fe445	face_landmarks_v1.hef	https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/v5.3.0/hailo15h/face_landmarks_lite_nv12.hef

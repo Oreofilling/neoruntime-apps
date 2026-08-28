@@ -34,7 +34,6 @@ containerized AIPC apps.
 | `examples/person-detection/` | Example | Person detection with inference and events |
 | `examples/people-counting/` | Example | People-counting starter application |
 | `examples/object-detection/` | Example | Object detection and tracking starter |
-| `examples/face-cascade/` | Example | Cascade inference example for face landmarks |
 | `tools/clip-viewer/` | Tool | CLIP zero-shot image classification viewer |
 | `tools/visualizer/` | Tool | Real-time inference result preview |
 | `tools/parallel-benchmark/` | Tool | Parallel inference benchmark dashboard |
