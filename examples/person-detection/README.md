@@ -38,12 +38,12 @@ Web console:
 
 1. Open `http://192.0.2.72:8080`.
 2. Go to app management.
-3. Upload the built `person-detection-1.0.0-arm64.nrt` package.
+3. Upload the built `person-detection-1.0.0-arm64.neoapp` package.
 
 API (extract the package, then upload manifest + image and install):
 
 ```bash
-tar xzf person-detection-1.0.0-arm64.nrt
+tar xzf person-detection-1.0.0-arm64.neoapp
 curl -X POST http://192.0.2.72:8080/api/v1/apps/upload-manifest \
   -H "Authorization: Bearer <your-token-key>" \
   -F "file=@person-detection-1.0.0-arm64/app.yaml"
@@ -149,7 +149,7 @@ device.set_ir_led(True)
 
 ### Web console
 
-1. Upload and install the `.nrt` package from app management.
+1. Upload and install the `.neoapp` package from app management.
 2. Start the app and confirm that its state becomes running.
 3. Open the app details page and view live logs.
 4. Subscribe to `app/person-detection/*` in the event view.
@@ -158,7 +158,7 @@ device.set_ir_led(True)
 ### API
 
 ```bash
-# 1. Install (web upload of the .nrt package, or the upload-manifest →
+# 1. Install (web upload of the .neoapp package, or the upload-manifest →
 #    upload-image → install-package sequence shown above)
 # 2. Start
 curl -X POST http://192.0.2.72:8080/api/v1/apps/person-detection/start \

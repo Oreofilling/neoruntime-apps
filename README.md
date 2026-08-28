@@ -11,10 +11,10 @@ containerized AIPC apps.
 
 | Showcase | Latest ARM64 bundle |
 | -------- | ------------------- |
-| Model Showcase | [model-showcase-latest-arm64.nrt](https://github.com/camthink-ai/neoruntime-apps/releases/download/showcase-bundles-latest/model-showcase-latest-arm64.nrt) |
-| Parking Lot | [parking-lot-latest-arm64.nrt](https://github.com/camthink-ai/neoruntime-apps/releases/download/showcase-bundles-latest/parking-lot-latest-arm64.nrt) |
-| Gym Ops | [gym-ops-latest-arm64.nrt](https://github.com/camthink-ai/neoruntime-apps/releases/download/showcase-bundles-latest/gym-ops-latest-arm64.nrt) |
-| Shelf Ops | [shelf-ops-latest-arm64.nrt](https://github.com/camthink-ai/neoruntime-apps/releases/download/showcase-bundles-latest/shelf-ops-latest-arm64.nrt) |
+| Model Showcase | [model-showcase-latest-arm64.neoapp](https://github.com/camthink-ai/neoruntime-apps/releases/download/showcase-bundles-latest/model-showcase-latest-arm64.neoapp) |
+| Parking Lot | [parking-lot-latest-arm64.neoapp](https://github.com/camthink-ai/neoruntime-apps/releases/download/showcase-bundles-latest/parking-lot-latest-arm64.neoapp) |
+| Gym Ops | [gym-ops-latest-arm64.neoapp](https://github.com/camthink-ai/neoruntime-apps/releases/download/showcase-bundles-latest/gym-ops-latest-arm64.neoapp) |
+| Shelf Ops | [shelf-ops-latest-arm64.neoapp](https://github.com/camthink-ai/neoruntime-apps/releases/download/showcase-bundles-latest/shelf-ops-latest-arm64.neoapp) |
 
 [All releases](https://github.com/camthink-ai/neoruntime-apps/releases)
 
@@ -64,7 +64,7 @@ Set `AIPC_SDK_VERSION=<version>` to build against a different release, or
 `AIPC_SDK_VERSION=latest` to float to the newest PyPI release. A weekly
 GitHub Actions probe canaries new SDK releases and opens a bump PR.
 
-Runtime credentials, device addresses, and generated `.nrt` packages are
+Runtime credentials, device addresses, and generated `.neoapp` packages are
 intentionally not committed. Use environment variables and local deployment
 configuration for device-specific values. Model HEFs *are* committed (vendored
 per app via `.gitignore` negations) — see [Model Files](#model-files).
@@ -100,7 +100,7 @@ fresh devices — no manual `/data/aipc/models` provisioning step.
 
 ## Showcase Bundles
 
-Showcase bundles are `.nrt` packages: tar.gz archives holding `app.yaml`,
+Showcase bundles are `.neoapp` packages: tar.gz archives holding `app.yaml`,
 `image.tar` (a `docker save` of the app image), companion YAML files, and
 `SHA256SUMS`, all under a `<showcase>-<version>-<arch>/` directory. Every
 `build.sh` in this repo produces the same package format, so examples and
@@ -123,11 +123,11 @@ per showcase and verified against `models.manifest` at build time, so installed
 bundles run on fresh devices; device-provisioned copies still take precedence
 where present.
 
-To install a downloaded bundle on a device, upload the `.nrt` file in the
+To install a downloaded bundle on a device, upload the `.neoapp` file in the
 web app import dialog, or extract it and run:
 
 ```bash
-tar xzf <showcase>-<version>-arm64.nrt
+tar xzf <showcase>-<version>-arm64.neoapp
 cd <showcase>-<version>-arm64
 aipc-cli app install app.yaml image.tar
 ```

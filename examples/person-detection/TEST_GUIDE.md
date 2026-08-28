@@ -35,7 +35,7 @@ cd <person-detection-app-dir>
 ./build.sh arm64
 ```
 
-The build creates `person-detection-1.0.0-arm64.nrt`.
+The build creates `person-detection-1.0.0-arm64.neoapp`.
 
 ### Option 2: Build manually
 
@@ -47,11 +47,11 @@ docker buildx build --platform linux/arm64 -t aipc/person-detection:1.0.0 .
 # 2. Export the image
 docker save aipc/person-detection:1.0.0 -o image.tar
 
-# 3. Package the app (.nrt = tar.gz with app.yaml + image.tar + SHA256SUMS)
+# 3. Package the app (.neoapp = tar.gz with app.yaml + image.tar + SHA256SUMS)
 mkdir -p person-detection-1.0.0-arm64
 cp app.yaml image.tar person-detection-1.0.0-arm64/
 (cd person-detection-1.0.0-arm64 && sha256sum * > SHA256SUMS)
-tar -czf person-detection-1.0.0-arm64.nrt person-detection-1.0.0-arm64
+tar -czf person-detection-1.0.0-arm64.neoapp person-detection-1.0.0-arm64
 
 # 4. Clean up
 rm -f image.tar
@@ -61,7 +61,7 @@ rm -f image.tar
 
 1. Open app management.
 2. Click the install button.
-3. Choose the `person-detection-1.0.0-arm64.nrt` package.
+3. Choose the `person-detection-1.0.0-arm64.neoapp` package.
 4. Confirm the parsed manifest values.
 5. Complete the installation and wait for the app to appear in the list.
 
@@ -272,7 +272,7 @@ permissions:
 TOKEN="Bearer <your-token-key>"
 BASE="http://192.0.2.72:8080/api/v1"
 
-# App install: upload the .nrt package via the web console, or run the
+# App install: upload the .neoapp package via the web console, or run the
 # upload-manifest → upload-image → install-package sequence (see README)
 curl -H "Authorization: $TOKEN" $BASE/apps
 curl -H "Authorization: $TOKEN" $BASE/apps/person-detection

@@ -137,7 +137,7 @@ for showcase in "${SHOWCASES[@]}"; do
     BUNDLE_NAME="${APP_NAME}-${VERSION}-${ARCH}"
     BUNDLE_DIR="$OUTPUT_ROOT/$BUNDLE_NAME"
     IMAGE_TAR="$BUNDLE_DIR/image.tar"
-    BUNDLE_NRT="$OUTPUT_ROOT/${BUNDLE_NAME}.nrt"
+    BUNDLE_NRT="$OUTPUT_ROOT/${BUNDLE_NAME}.neoapp"
 
     echo "============================================"
     echo "  Building $APP_NAME $VERSION for linux/$ARCH"
@@ -173,7 +173,7 @@ for showcase in "${SHOWCASES[@]}"; do
     shopt -u nullglob
 
     cat > "$BUNDLE_DIR/README.txt" <<EOF
-$APP_NAME showcase bundle (.nrt)
+$APP_NAME showcase bundle (.neoapp)
 
 Image:
   $IMAGE_TAG

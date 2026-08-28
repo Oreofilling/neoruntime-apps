@@ -132,7 +132,7 @@ scp clip_vit_b_32_image_encoder_nv12.hef root@<host>:/data/aipc/models/clip/
 scp yolo_world_v2s_540.hef root@<host>:/data/aipc/models/
 
 # 2. 构建并安装 app bundle（参照仓库 scripts/build_showcase_artifacts.sh，
-#    产物为 .nrt 包：tar xzf shelf-ops-*-arm64.nrt 后用解出的 app.yaml + image.tar）
+#    产物为 .neoapp 包：tar xzf shelf-ops-*-arm64.neoapp 后用解出的 app.yaml + image.tar）
 aipc-cli app install app.yaml image.tar   # 升级用 app update 保住 /data/aipc/etc 卷
 
 # 3. 槽位标定：把 config.example.yaml 拷成 /data/aipc/etc/shelf-ops/config.yaml

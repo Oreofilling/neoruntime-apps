@@ -2,7 +2,7 @@
 # Unified app build script for AIPC platform
 # Usage: ./scripts/build_app.sh <app-dir> [--arch arm64|amd64] [--output ./dist]
 #
-# Automates: SDK install → docker build → save image → package .nrt → cleanup
+# Automates: SDK install → docker build → save image → package .neoapp → cleanup
 #
 # The SDK is installed from PyPI: neoruntime-ipc-sdk==$SDK_VERSION, where the
 # version resolves via scripts/resolve_sdk_version.sh — sdk.lock by default,
@@ -23,7 +23,7 @@ usage() {
     echo ""
     echo "  app-directory   Path to app directory containing Dockerfile and app.yaml"
     echo "  --arch          Target architecture (default: arm64)"
-    echo "  --output        Output directory for .nrt package (default: app directory)"
+    echo "  --output        Output directory for .neoapp package (default: app directory)"
     exit 1
 }
 
@@ -91,12 +91,12 @@ echo "Exporting image..."
 IMAGE_TAR="$APP_DIR/image.tar"
 docker save "$IMAGE_TAG" -o "$IMAGE_TAR"
 
-# Package (.nrt = tar.gz bundle with the same layout as showcase bundles:
+# Package (.neoapp = tar.gz bundle with the same layout as showcase bundles:
 # <app>-<version>-<arch>/{app.yaml, image.tar, SHA256SUMS} — one package
 # format for web import and CLI install).
-echo "Creating .nrt package..."
+echo "Creating .neoapp package..."
 PACKAGE_DIR="${APP_NAME}-${VERSION}-${ARCH}"
-NRT_PACKAGE="$OUTPUT_DIR/${PACKAGE_DIR}.nrt"
+NRT_PACKAGE="$OUTPUT_DIR/${PACKAGE_DIR}.neoapp"
 STAGING_ROOT="$OUTPUT_DIR/.tmp-nrt-staging"
 STAGING="$STAGING_ROOT/$PACKAGE_DIR"
 rm -rf "$STAGING_ROOT"
@@ -115,4 +115,4 @@ echo "  Size: $(du -h "$NRT_PACKAGE" | cut -f1)"
 echo "============================================"
 echo ""
 echo "To install on device:"
-echo "  tar xzf ${PACKAGE_DIR}.nrt && aipc-cli app install <app-id> ${PACKAGE_DIR}/app.yaml ${PACKAGE_DIR}/image.tar"
+echo "  tar xzf ${PACKAGE_DIR}.neoapp && aipc-cli app install <app-id> ${PACKAGE_DIR}/app.yaml ${PACKAGE_DIR}/image.tar"

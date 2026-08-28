@@ -28,10 +28,10 @@ fi
 echo "Exporting image..."
 docker save "aipc/${APP_NAME}:${VERSION}" -o image.tar
 
-# Create .nrt package (tar.gz, same layout as build_app.sh bundles)
-echo "Creating .nrt package..."
+# Create .neoapp package (tar.gz, same layout as build_app.sh bundles)
+echo "Creating .neoapp package..."
 PACKAGE_DIR="${APP_NAME}-${VERSION}-${ARCH}"
-NRT_PACKAGE="${PACKAGE_DIR}.nrt"
+NRT_PACKAGE="${PACKAGE_DIR}.neoapp"
 rm -rf .tmp-nrt-staging "${NRT_PACKAGE}"
 mkdir -p ".tmp-nrt-staging/${PACKAGE_DIR}"
 cp app.yaml ".tmp-nrt-staging/${PACKAGE_DIR}/app.yaml"
