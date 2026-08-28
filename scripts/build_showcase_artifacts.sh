@@ -65,7 +65,7 @@ if [ -z "$OUTPUT_ROOT" ]; then
     exit 1
 fi
 
-# SDK version: latest release on PyPI, or AIPC_SDK_VERSION to pin.
+# SDK version: sdk.lock by default; AIPC_SDK_VERSION to override.
 SDK_VERSION="$("$SCRIPT_DIR/resolve_sdk_version.sh")"
 
 if [ "${#SHOWCASES[@]}" -eq 0 ]; then
@@ -142,7 +142,7 @@ for showcase in "${SHOWCASES[@]}"; do
     echo "============================================"
     echo "  Building $APP_NAME $VERSION for linux/$ARCH"
     echo "  Image: $IMAGE_TAG"
-    echo "  SDK: neoruntime-ipc-sdk ${SDK_VERSION} (PyPI)"
+    echo "  SDK: neoruntime-ipc-sdk ${SDK_VERSION} ($(if [ -n "${AIPC_SDK_VERSION:-}" ]; then echo AIPC_SDK_VERSION; else echo sdk.lock; fi))"
     echo "============================================"
 
     rm -rf "$BUNDLE_DIR" "$BUNDLE_TGZ"

@@ -5,8 +5,8 @@
 # Automates: SDK install → docker build → save image → package .aipc → cleanup
 #
 # The SDK is installed from PyPI: neoruntime-ipc-sdk==$SDK_VERSION, where the
-# version resolves to the latest release on PyPI (scripts/resolve_sdk_version.sh;
-# AIPC_SDK_VERSION overrides to pin).
+# version resolves via scripts/resolve_sdk_version.sh — sdk.lock by default,
+# AIPC_SDK_VERSION to override (or =latest to float).
 
 set -e
 
@@ -47,7 +47,7 @@ fi
 APP_DIR="$(cd "$APP_DIR" && pwd)"
 APP_NAME="$(basename "$APP_DIR")"
 
-# SDK version: latest release on PyPI, or AIPC_SDK_VERSION to pin.
+# SDK version: sdk.lock by default; AIPC_SDK_VERSION to override.
 SDK_VERSION="$("$SCRIPT_DIR/resolve_sdk_version.sh")"
 
 APP_YAML="$APP_DIR/app.yaml"
@@ -68,7 +68,7 @@ mkdir -p "$OUTPUT_DIR"
 echo "============================================"
 echo "  Building ${APP_NAME}:${VERSION} for ${ARCH}"
 echo "  Image: ${IMAGE_TAG}"
-echo "  SDK: neoruntime-ipc-sdk ${SDK_VERSION} (PyPI)"
+echo "  SDK: neoruntime-ipc-sdk ${SDK_VERSION} ($(if [ -n "${AIPC_SDK_VERSION:-}" ]; then echo AIPC_SDK_VERSION; else echo sdk.lock; fi))"
 echo "============================================"
 
 # Stage models (zoo fetch, sha256-pinned via models.manifest; no-op otherwise)

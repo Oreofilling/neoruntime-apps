@@ -1,0 +1,104 @@
+name: SDK probe
+
+# Weekly: compare sdk.lock against the newest neoruntime-ipc-sdk on PyPI.
+# If a newer release exists, canary-build one example with it and — when the
+# canary passes — open a PR bumping sdk.lock (and the Dockerfile ARG defaults).
+# This keeps the lock fresh without letting unpinned builds float blind.
+
+on:
+  schedule:
+    - cron: "23 3 * * 1" # Mondays 03:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sdk-probe
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout apps repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Resolve latest SDK on PyPI
+        id: latest
+        run: |
+          set -euo pipefail
+          VERSION="$(curl -fsSL https://pypi.org/pypi/neoruntime-ipc-sdk/json \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["info"]["version"])')"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "PyPI latest: $VERSION"
+
+      - name: Read locked SDK
+        id: locked
+        run: |
+          set -euo pipefail
+          echo "version=$(tr -d "[:space:]" < sdk.lock)" >> "$GITHUB_OUTPUT"
+
+      - name: Report up-to-date
+        if: steps.latest.outputs.version == steps.locked.outputs.version
+        run: >
+          echo "sdk.lock (${{ steps.locked.outputs.version }}) already tracks
+          the PyPI latest — nothing to do."
+
+      - name: Canary build with the new SDK
+        if: steps.latest.outputs.version != steps.locked.outputs.version
+        env:
+          AIPC_SDK_VERSION: ${{ steps.latest.outputs.version }}
+        run: |
+          set -euo pipefail
+          ./examples/person-detection/build.sh arm64
+          ./scripts/smoke_image.sh examples/person-detection
+
+      - name: Open bump PR
+        if: steps.latest.outputs.version != steps.locked.outputs.version
+        env:
+          NEW_VERSION: ${{ steps.latest.outputs.version }}
+          OLD_VERSION: ${{ steps.locked.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          BRANCH="chore/sdk-${NEW_VERSION}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          echo "$NEW_VERSION" > sdk.lock
+          # Keep the bare `docker build` fallback defaults in sync with the lock.
+          grep -rl '^ARG SDK_VERSION=' examples showcases \
+            | xargs sed -i "s/^ARG SDK_VERSION=.*/ARG SDK_VERSION=${NEW_VERSION}/"
+          git commit -am "chore: bump neoruntime-ipc-sdk to ${NEW_VERSION}"
+          git push origin "$BRANCH"
+
+          cat > pr-body.md <<EOF
+          Weekly SDK probe found neoruntime-ipc-sdk **${NEW_VERSION}** on PyPI (lock: ${OLD_VERSION}).
+
+          - Canary: \`examples/person-detection\` built for arm64 and smoke-tested with
+            \`AIPC_SDK_VERSION=${NEW_VERSION}\` in the [sdk-probe run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) — passed.
+          - Changes: \`sdk.lock\` + the \`ARG SDK_VERSION\` defaults in all example/showcase Dockerfiles.
+
+          Note: workflows opened by \`GITHUB_TOKEN\` do not trigger CI on the PR.
+          The canary above already validated the new SDK; to get the full matrix,
+          re-run "Build examples" / "Build showcase bundles" via workflow_dispatch
+          or close+reopen this PR from a token-holding account.
+          EOF
+
+          gh pr create \
+            --title "chore: bump neoruntime-ipc-sdk to ${NEW_VERSION}" \
+            --body-file pr-body.md \
+            --base "${GITHUB_REF_NAME:-main}" \
+            --head "$BRANCH"

@@ -23,7 +23,8 @@ RUN set -e; \
 WORKDIR /app
 
 # SDK from PyPI, pinned via --build-arg SDK_VERSION by build_showcase_artifacts.sh;
-# the default only matters for a bare `docker build` without the helper.
+# the default only matters for a bare `docker build` without the helper;
+# the pinned source is sdk.lock at the repo root (AIPC_SDK_VERSION overrides).
 ARG SDK_VERSION=0.5.0
 RUN pip install --no-cache-dir "neoruntime-ipc-sdk==${SDK_VERSION}"
 
