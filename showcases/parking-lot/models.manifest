@@ -1,0 +1,10 @@
+# Models fetched by scripts/fetch_models.sh (zoo compile pinned by sha256).
+# Vendored files in this directory (no rows here) are exact device artifacts
+# committed via the .gitignore negation:
+#   - yolov5m_vehicles.hef — custom 1-class compile (variant-coupled NMS;
+#     the generic zoo yolov5m would mismatch the postprocess config)
+#   - tiny_yolov4_license_plates.hef — license-plate detector, no zoo build
+#   - paddle_ocr_v5_mobile_recognition_nv12.hef — plate OCR, no zoo build
+# Zoo pinning rationale: v5.3.0/hailo15h matches the device firmware
+# (HailoRT 5.3.0). Re-verify with `hailortcli parse-hef` before bumping.
+0c7c7e5958e75f722bd3355106dba21d2c13f737dab3f627701844b34ed9f7e7	scdepthv3.hef	https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/v5.3.0/hailo15h/scdepthv3.hef

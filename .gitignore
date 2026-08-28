@@ -13,10 +13,17 @@ dist/
 *.tar
 *.tar.*
 *.whl
-!third_party/*.whl
 *.log
 *.pem
 *.key
 .tmp-*
 .tmp.*
 **/.aipc-build/
+
+# Zoo-fetched model files (scripts/fetch_models.sh); vendored files are
+# re-included below and committed.
+examples/*/models/*.hef
+showcases/*/models/*.hef
+!showcases/parking-lot/models/*.hef
+!showcases/shelf-ops/models/*.hef
+!showcases/gym-ops/models/*.hef

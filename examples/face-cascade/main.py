@@ -1,5 +1,7 @@
-from hailo_ipc_sdk import InferenceClient, EventClient
+import os
 import time
+
+from neoruntime_ipc_sdk import InferenceClient, EventClient
 
 def main():
     # Initialize clients.
@@ -8,10 +10,14 @@ def main():
 
     print("Starting person detection...")
 
-    # Subscribe to video inference results.
+    # Subscribe to video inference results. Model id resolution order:
+    # platform-injected spec.models alias, then the app env, then the bundled id.
     for frame_seq, result in inf.subscribe(
         stream="main",
-        model="person_vehicle_v1",
+        model=os.environ.get(
+            "AIPC_MODEL_detector",
+            os.environ.get("DETECTION_MODEL", "person_vehicle_v1"),
+        ),
         fps=10
     ):
         # Count detected people.

@@ -15,11 +15,23 @@ spec:
     cpu: "50%"
     memory: "256Mi"
 
+  # Model dependencies — bundled in the image (models/, fetched from the
+  # pinned Hailo model zoo compile) so installs are plug-and-play. The id is
+  # auto-authorized for inference; the resolved id is injected at runtime as
+  # AIPC_MODEL_detector. A device that already has the id uses its own copy.
+  models:
+    detector:
+      id: person_v1
+      path: /opt/aipc/models/person_v1.hef
+      type: detection
+      required: true
+
   permissions:
+    video:
+      - main.raw
+      - sub.raw
+
     inference:
-      models:
-        - person_v1
-        - person_vehicle_v1
       max_qps: 10
 
     events:
@@ -32,6 +44,10 @@ spec:
       light: true
 
   env:
+    # Devices expose main/sub streams (dev rigs used cam0_main; app.py keeps
+    # that as the env-unset default).
+    - name: STREAM_ID
+      value: "main"
     - name: THRESHOLD
       value: "10"
 

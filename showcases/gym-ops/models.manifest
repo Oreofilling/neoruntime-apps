@@ -1,0 +1,13 @@
+# Models fetched by scripts/fetch_models.sh (zoo compile pinned by sha256).
+# Vendored device artifact in this directory (no row here, kept via the
+# .gitignore negation):
+#   - hailo_yolov8n_384_640.hef — 640x384 fixed-resolution compile of the
+#     secondary detection model; the generic zoo yolov8n is 640x640 and the
+#     app's input_size=(640, 384) expects this exact build.
+# Zoo pinning rationale: v5.3.0/hailo15h matches the device firmware
+# (HailoRT 5.3.0). yolov8s_pose is registered at runtime with the
+# native_yolov8_pose postprocess blob carried as the model variant — a plain
+# re-register over an existing registration corrupts postprocess, so the app
+# (not the platform) owns this model's lifecycle. Re-verify with
+# `hailortcli parse-hef` before bumping.
+71ee6fd7ab02d66a2f34ecf753cb5adfb5c27bf6fc1a425b93206a76b9819d36	yolov8s_pose.hef	https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/v5.3.0/hailo15h/yolov8s_pose.hef

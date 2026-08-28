@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import Optional
 
 # AIPC SDK
-from hailo_ipc_sdk import (
+from neoruntime_ipc_sdk import (
     InferenceClient,
     EventClient,
     DeviceClient,
@@ -27,6 +27,10 @@ from hailo_ipc_sdk import (
     InferenceResult,
     DetectedObject,
 )
+
+# Stream id from env (app.yaml STREAM_ID; devices expose main/sub, dev rigs
+# used third)
+STREAM_ID = os.environ.get("STREAM_ID", "third")
 
 # Configure logging
 logging.basicConfig(
@@ -89,7 +93,8 @@ class PersonDetectionApp:
             logger.info(f"Available models: {[m.model_id for m in models]}")
 
             # Check if required model is available
-            required_model = "person-detection"
+            # (resolved id from spec.models, falls back to the bundled id)
+            required_model = os.environ.get("AIPC_MODEL_detector", "person-detection")
             model_available = any(m.model_id == required_model for m in models)
             if model_available:
                 logger.info(f"[OK] Model '{required_model}' is available for inference")
@@ -118,7 +123,7 @@ class PersonDetectionApp:
                 logger.info(f"Available video streams: {available_streams}")
 
                 # Check if required stream is available
-                required_stream = "third"
+                required_stream = STREAM_ID
                 stream_info = self.media.get_stream_info(required_stream)
                 if stream_info:
                     logger.info(f"[OK] Video stream '{required_stream}' is available: "
@@ -150,7 +155,7 @@ class PersonDetectionApp:
             return 1
 
         logger.info("Starting person detection loop...")
-        logger.info(f"Subscribing to stream 'third' with model 'person-detection'")
+        logger.info(f"Subscribing to stream '{STREAM_ID}' with model 'person-detection'")
         logger.info("Waiting for inference results... (this may take a moment if stream is initializing)")
 
         first_frame_received = False
@@ -159,8 +164,8 @@ class PersonDetectionApp:
             # Subscribe to video stream inference results
             # The platform will run inference on each frame and send results
             for frame_seq, result in self.inference.subscribe(
-                stream="third",
-                model="person-detection",
+                stream=STREAM_ID,
+                model=os.environ.get("AIPC_MODEL_detector", "person-detection"),
                 fps=10  # Process at 10 FPS
             ):
                 if not self.running:
@@ -189,7 +194,7 @@ class PersonDetectionApp:
             return 1
         finally:
             if not first_frame_received:
-                logger.warning("No inference results received - check if video stream 'third' is active and model 'person-detection' is loaded")
+                logger.warning(f"No inference results received - check if video stream '{STREAM_ID}' is active and model 'person-detection' is loaded")
             self._cleanup()
 
         return 0

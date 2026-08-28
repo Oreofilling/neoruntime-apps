@@ -222,23 +222,48 @@ spec:
   models:
     clip:                    # alias：应用侧自选的名字（env 变量名后缀）
       id: clip_vit_b_32      # 平台模型 id（必填）
+      path: /opt/aipc/bundled-models/clip_vit_b_32_image_encoder_nv12.hef
+                             # 镜像内置模型文件（可选，Phase B 已生效）
+      type: embedding        # 有 path 时必填（detection/embedding/depth/...）
       required: true         # 缺失时阻断安装（默认 false：仅告警）
 ```
 
 约束（manifest.go `Validate()`）：alias 须匹配 `^[A-Za-z_][A-Za-z0-9_]*$`，
 且不得为 `HOST_PREFIX` / `APP_ID` / `APP_ROLE` / `CONTAINER_NAME`（与平台保留
-env 前缀冲突）；`path`（镜像内置模型）属 Phase B，本轮显式报错不支持。
+env 前缀冲突）；声明 `path` 时 `type` 必填且匹配 `^[a-z][a-z0-9_]*$`。
 
-### 平台实际行为（三项均真实生效）
+### 平台实际行为（四项均真实生效）
 
 1. **安装期校验**（server.go:2310-2317 `validateModelDependencies`，调用点
    server.go:453 / :746）：一次 `ListModels` 全量比对 —— `required: true` 且
-   缺失 → 安装在**镜像拉取前**失败（不浪费几百 MB 下载），所有缺失项合并成
-   一条错误；`required: false` 且缺失 → 安装继续，任务进度中出现告警。
+   设备缺失、manifest 又未给 `path` → 安装在**镜像拉取前**失败（不浪费几百
+   MB 下载），所有缺失项合并成一条错误；`required: false` 且缺失 → 安装继续，
+   任务进度中出现告警。
 2. **env 注入**（runtime.go:313 单容器；:187 多容器全部容器）：容器创建时
    注入 `AIPC_MODEL_<alias>=<id>`。
 3. **授权并入**：各依赖 id 并入 `permissions.inference.models`（解析时、仅
    内存），Web 展示与模型删除保护随之生效。
+4. **镜像内置（`path`，Phase B 已生效）**：设备已有该 id → 平台侧副本优先，
+   镜像文件不动作；设备缺失 → 安装时从镜像提取该文件（containerd
+   ExtractFileFromImage）并以 **transient** 方式注册（模型页不显示、不写
+   模型库）。
+
+### path 的安全边界（决定哪些模型能进 spec.models）
+
+transient 注册不携带 variant：检测类模型会被套默认 yolov8 后端（tensor 名
+不匹配 → 推理期抛错），而应用通常把「已注册」视为良性、不再补注册 —— 没有
+自愈路径。因此只有两类模型可以声明 `path`：
+
+1. 原始输出无需后处理的模型（embedding / depth）—— 空 variant 即正确配置；
+2. 应用启动时会带 variant 重新注册的模型（如 parking-lot 的
+   yolov5m_vehicles：运行时重注册整体重写 postprocess 配置）。
+
+需要复杂 postprocess 的模型必须留在应用侧运行时注册、不进 spec.models：
+gym-ops 的 yolov8s_pose（native_yolov8_pose blob 只能经注册时的 variant
+通道下发）、shelf-ops 的 yolo_world_540（identity variant + 双输入声明 +
+应用侧 decode）、parking-lot 的车牌两件套（无 variant 时应用跳过重注册）。
+这些模型靠 `permissions.inference.models` 授权清单 + 应用运行时注册；镜像
+内文件仅作 `MODEL_ROOT` 缺失时的回退副本（host-first 解析）。
 
 ### 应用侧读取方式
 

@@ -30,6 +30,21 @@ spec:
     memory: "512Mi"
 
   # --------------------------------------------
+  # Model dependencies (bundled in the image, zoo-fetched at build time)
+  # --------------------------------------------
+  models:
+    detector:
+      id: person_vehicle_v1
+      path: /opt/aipc/models/person_vehicle_v1.hef
+      type: detection
+      required: true
+    landmarks:
+      id: face_landmarks_v1
+      path: /opt/aipc/models/face_landmarks_v1.hef
+      type: keypoint
+      required: false
+
+  # --------------------------------------------
   # Permission configuration
   # --------------------------------------------
   permissions:
@@ -39,9 +54,6 @@ spec:
 
     # AI inference permissions
     inference:
-      models:
-        - person_vehicle_v1
-        - face_landmarks_v1
       max_qps: 30
       max_concurrent: 4
       allow_register_model: false

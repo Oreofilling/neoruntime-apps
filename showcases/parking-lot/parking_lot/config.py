@@ -16,6 +16,23 @@ from typing import Dict, List, Tuple
 
 _MODEL_ROOT = "/data/aipc/models"
 
+# Models bundled in the image (flat layout) — used when the host has not
+# provisioned /data/aipc/models itself, so installs are plug-and-play.
+_BUNDLED_MODEL_ROOT = "/opt/aipc/models"
+
+
+def _model_path(*parts: str) -> str:
+    """Resolve a model file: host-provisioned copy first, bundled otherwise.
+
+    Devices that pre-provision /data/aipc/models (subdir layout) keep using
+    their own copy; everything else falls back to the image-bundled file
+    under /opt/aipc/models (flat, basename only).
+    """
+    host = os.path.join(_MODEL_ROOT, *parts)
+    if os.path.isfile(host):
+        return host
+    return os.path.join(_BUNDLED_MODEL_ROOT, os.path.basename(parts[-1]))
+
 # ---------------------------------------------------------------------------
 # Character set for license plate OCR (CTC decoder)
 # PaddleOCR v5 dictionary — loaded from ppocrv5_dict.txt bundled with the app.
@@ -72,7 +89,7 @@ _COCO_VEHICLE_CLASSES: Dict[int, str] = {
 
 MODEL_DEFS = {
     "yolov5m_vehicles": {
-        "path": os.path.join(_MODEL_ROOT, "detection", "yolov5m_vehicles.hef"),
+        "path": _model_path("detection", "yolov5m_vehicles.hef"),
         "type": "detection",
         "input_format": "rgb",
         "input_width": 1920,
@@ -105,14 +122,14 @@ MODEL_DEFS = {
         }),
     },
     "scdepthv3": {
-        "path": os.path.join(_MODEL_ROOT, "depth", "scdepthv3.hef"),
+        "path": _model_path("depth", "scdepthv3.hef"),
         "type": "depth",
         "input_format": "rgb",
         "input_width": 320,
         "input_height": 256,
     },
     "license_plate_det": {
-        "path": os.path.join(_MODEL_ROOT, "detection", "tiny_yolov4_license_plates.hef"),
+        "path": _model_path("detection", "tiny_yolov4_license_plates.hef"),
         "type": "detection",
         "input_format": "rgb",
         "input_width": 416,
@@ -120,7 +137,7 @@ MODEL_DEFS = {
         "register_type": "",
     },
     "plate_recognition": {
-        "path": os.path.join(_MODEL_ROOT, "ocr", "paddle_ocr_v5_mobile_recognition_nv12.hef"),
+        "path": _model_path("ocr", "paddle_ocr_v5_mobile_recognition_nv12.hef"),
         "type": "ocr_recognition",
         "input_format": "nv12",
         "input_width": 320,

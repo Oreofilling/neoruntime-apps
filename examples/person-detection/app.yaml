@@ -20,16 +20,26 @@ spec:
     cpu: "50%"
     memory: "256Mi"
 
+  # Model dependencies — bundled in the image (models/, fetched from the
+  # pinned Hailo model zoo compile) so installs are plug-and-play. The id is
+  # auto-authorized for inference; the resolved id is injected at runtime as
+  # AIPC_MODEL_detector. A device that already has the id uses its own copy.
+  models:
+    detector:
+      id: person-detection
+      path: /opt/aipc/models/person-detection.hef
+      type: detection
+      required: true
+
   # Permission configuration
   permissions:
-    # Video stream access
+    # Video stream access (devices expose main/sub; dev rigs used third)
     video:
-      - third.raw      # Raw video stream (SHM) for zero-copy
+      - main.raw
+      - sub.raw
 
     # AI Inference permissions
     inference:
-      models:
-        - person-detection  # Person detection model
       max_qps: 30
       max_concurrent: 2
       allow_register_model: false
@@ -54,6 +64,8 @@ spec:
 
   # Environment variables
   env:
+    - name: STREAM_ID
+      value: "main"
     - name: DETECTION_THRESHOLD
       value: "0.7"
     - name: ALERT_COOLDOWN_SECONDS
