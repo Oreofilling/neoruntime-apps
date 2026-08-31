@@ -35,10 +35,16 @@ if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "==> smoke [$IMAGE] SDK import"
-docker run --rm --entrypoint python3 "$IMAGE" -c \
-    'import neoruntime_ipc_sdk, importlib.metadata as m; \
-     print("neoruntime-ipc-sdk", m.version("neoruntime-ipc-sdk"))'
+# Only assert the SDK import when the app actually uses it — hello-world
+# deliberately ships without the SDK (its app.py only touches the stdlib).
+if [ -n "${APP_DIR:-}" ] && ! grep -rq --include='*.py' neoruntime_ipc_sdk "$APP_DIR"; then
+    echo "==> smoke [$IMAGE] no neoruntime_ipc_sdk usage in app sources — skipped SDK import"
+else
+    echo "==> smoke [$IMAGE] SDK import"
+    docker run --rm --entrypoint python3 "$IMAGE" -c \
+        'import neoruntime_ipc_sdk, importlib.metadata as m; \
+         print("neoruntime-ipc-sdk", m.version("neoruntime-ipc-sdk"))'
+fi
 
 echo "==> smoke [$IMAGE] byte-compile /app"
 docker run --rm --entrypoint python3 "$IMAGE" -m compileall -q /app
