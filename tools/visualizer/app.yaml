@@ -1,4 +1,4 @@
-# AIPC Platform Application Manifest
+# NeoRuntime Platform Application Manifest
 # Visualizer - Real-time inference result preview
 
 apiVersion: v1
@@ -9,7 +9,7 @@ metadata:
   name: Inference Visualizer
   version: 1.0.0
   description: "Real-time inference result preview with HTTP MJPEG streaming"
-  author: AIPC Team
+  author: NeoRuntime Team
 
 spec:
   image: visualizer:1.0.0

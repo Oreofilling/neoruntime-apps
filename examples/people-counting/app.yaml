@@ -6,10 +6,10 @@ metadata:
   name: People Counting
   version: 1.0.0
   description: Count people in the scene and send alerts when threshold exceeded
-  author: AIPC
+  author: NeoRuntime
 
 spec:
-  image: aipc/people-counting:1.0.0
+  image: neoruntime/people-counting:1.0.0
 
   resources:
     cpu: "50%"

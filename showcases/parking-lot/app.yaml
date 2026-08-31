@@ -1,4 +1,4 @@
-# AIPC Platform Application Manifest
+# NeoRuntime Platform Application Manifest
 # Parking Lot Full Element Extraction
 
 apiVersion: v1
@@ -9,7 +9,7 @@ metadata:
   name: Parking Lot Full Element Extraction
   version: 1.0.0
   description: "Parking-lot element extraction with vehicle attributes, depth anti-spoofing, and plate OCR."
-  author: AIPC Team
+  author: NeoRuntime Team
   email: opensource@camthink.ai
 
 spec:

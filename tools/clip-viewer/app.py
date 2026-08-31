@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CLIP Zero-Shot Viewer Application for AIPC Platform
+CLIP Zero-Shot Viewer Application for NeoRuntime Platform
 
 Features:
 - Real-time zero-shot image classification using CLIP model (NPU)

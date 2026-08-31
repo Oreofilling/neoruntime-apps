@@ -65,7 +65,7 @@ if [ -z "$OUTPUT_ROOT" ]; then
     exit 1
 fi
 
-# SDK version: sdk.lock by default; AIPC_SDK_VERSION to override.
+# SDK version: sdk.lock by default; NEORUNTIME_SDK_VERSION to override.
 SDK_VERSION="$("$SCRIPT_DIR/resolve_sdk_version.sh")"
 
 if [ "${#SHOWCASES[@]}" -eq 0 ]; then
@@ -132,7 +132,7 @@ for showcase in "${SHOWCASES[@]}"; do
     VERSION="$(extract_yaml_value "$APP_YAML" "version")"
     IMAGE_TAG="$(extract_yaml_value "$APP_YAML" "image")"
     VERSION="${VERSION:-0.0.0}"
-    IMAGE_TAG="${IMAGE_TAG:-aipc/${APP_NAME}:${VERSION}}"
+    IMAGE_TAG="${IMAGE_TAG:-neoruntime/${APP_NAME}:${VERSION}}"
 
     BUNDLE_NAME="${APP_NAME}-${VERSION}-${ARCH}"
     BUNDLE_DIR="$OUTPUT_ROOT/$BUNDLE_NAME"
@@ -142,7 +142,7 @@ for showcase in "${SHOWCASES[@]}"; do
     echo "============================================"
     echo "  Building $APP_NAME $VERSION for linux/$ARCH"
     echo "  Image: $IMAGE_TAG"
-    echo "  SDK: neoruntime-ipc-sdk ${SDK_VERSION} ($(if [ -n "${AIPC_SDK_VERSION:-}" ]; then echo AIPC_SDK_VERSION; else echo sdk.lock; fi))"
+    echo "  SDK: neoruntime-ipc-sdk ${SDK_VERSION} ($(if [ -n "${NEORUNTIME_SDK_VERSION:-}" ]; then echo NEORUNTIME_SDK_VERSION; else echo sdk.lock; fi))"
     echo "============================================"
 
     rm -rf "$BUNDLE_DIR" "$BUNDLE_NRT"

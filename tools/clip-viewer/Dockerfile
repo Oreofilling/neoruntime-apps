@@ -1,6 +1,6 @@
 # CLIP Zero-Shot Viewer Application Container
 # Lightweight — all NPU inference done by ai-runtime, this is just a web UI.
-# For ARM64 (Hailo platform) with AIPC SDK
+# For ARM64 (Hailo platform) with NeoRuntime SDK
 
 FROM python:3.11-slim-bookworm
 

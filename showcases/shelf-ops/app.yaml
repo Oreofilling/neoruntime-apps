@@ -1,4 +1,4 @@
-# AIPC Platform Application Manifest
+# NeoRuntime Platform Application Manifest
 # ShelfOps - Slot-anchored CLIP shelf recognition: per-slot product/empty
 # classification, stockout/restock state machine, and time-bucket heatmap
 
@@ -10,10 +10,10 @@ metadata:
   name: ShelfOps Shelf Slot Recognition
   version: 0.3.0
   description: Slot-anchored CLIP recognition (product/empty per slot) or full-frame grid counting (slot_mode), stockout-restock state machine, and time-bucket heatmap analytics
-  author: AIPC Team
+  author: NeoRuntime Team
 
 spec:
-  image: aipc/shelf-ops:0.3.0
+  image: neoruntime/shelf-ops:0.3.0
 
   resources:
     cpu: "300%"

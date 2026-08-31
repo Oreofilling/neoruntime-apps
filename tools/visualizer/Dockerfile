@@ -3,7 +3,7 @@
 
 FROM python:3.10-slim
 
-LABEL maintainer="AIPC Team"
+LABEL maintainer="NeoRuntime Team"
 LABEL description="Inference result visualizer"
 LABEL version="1.0.0"
 

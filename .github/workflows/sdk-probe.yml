@@ -58,7 +58,7 @@ jobs:
       - name: Canary build with the new SDK
         if: steps.latest.outputs.version != steps.locked.outputs.version
         env:
-          AIPC_SDK_VERSION: ${{ steps.latest.outputs.version }}
+          NEORUNTIME_SDK_VERSION: ${{ steps.latest.outputs.version }}
         run: |
           set -euo pipefail
           ./examples/person-detection/build.sh arm64
@@ -88,7 +88,7 @@ jobs:
           Weekly SDK probe found neoruntime-ipc-sdk **${NEW_VERSION}** on PyPI (lock: ${OLD_VERSION}).
 
           - Canary: \`examples/person-detection\` built for arm64 and smoke-tested with
-            \`AIPC_SDK_VERSION=${NEW_VERSION}\` in the [sdk-probe run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) — passed.
+            \`NEORUNTIME_SDK_VERSION=${NEW_VERSION}\` in the [sdk-probe run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) — passed.
           - Changes: \`sdk.lock\` + the \`ARG SDK_VERSION\` defaults in all example/showcase Dockerfiles.
 
           Note: workflows opened by \`GITHUB_TOKEN\` do not trigger CI on the PR.

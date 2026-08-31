@@ -19,14 +19,14 @@ SDK_VERSION="$("${SCRIPT_DIR}/../../scripts/resolve_sdk_version.sh")"
 # Build Docker image
 echo "Building Docker image..."
 if [ "$ARCH" = "arm64" ]; then
-    docker buildx build --platform linux/arm64 --load --build-arg SDK_VERSION="${SDK_VERSION}" -t "aipc/${APP_NAME}:${VERSION}" .
+    docker buildx build --platform linux/arm64 --load --build-arg SDK_VERSION="${SDK_VERSION}" -t "neoruntime/${APP_NAME}:${VERSION}" .
 else
-    docker build --build-arg SDK_VERSION="${SDK_VERSION}" -t "aipc/${APP_NAME}:${VERSION}" .
+    docker build --build-arg SDK_VERSION="${SDK_VERSION}" -t "neoruntime/${APP_NAME}:${VERSION}" .
 fi
 
 # Export image
 echo "Exporting image..."
-docker save "aipc/${APP_NAME}:${VERSION}" -o image.tar
+docker save "neoruntime/${APP_NAME}:${VERSION}" -o image.tar
 
 # Create .neoapp package (tar.gz, same layout as build_app.sh bundles)
 echo "Creating .neoapp package..."

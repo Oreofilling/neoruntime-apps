@@ -26,7 +26,7 @@ if [ -d "$IMAGE" ]; then
     IMAGE="$(grep -m1 '^\s*image:' "$APP_YAML" | awk '{print $2}' | tr -d '"')"
     if [ -z "$IMAGE" ]; then
         VERSION="$(grep -m1 '^\s*version:' "$APP_YAML" | awk '{print $2}' | tr -d '"')"
-        IMAGE="aipc/$(basename "$APP_DIR"):${VERSION:-1.0.0}"
+        IMAGE="neoruntime/$(basename "$APP_DIR"):${VERSION:-1.0.0}"
     fi
 fi
 

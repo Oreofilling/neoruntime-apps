@@ -19,7 +19,6 @@ dist/
 *.key
 .tmp-*
 .tmp.*
-**/.aipc-build/
 
 # Zoo-fetched model files (scripts/fetch_models.sh); vendored files are
 # re-included below and committed.

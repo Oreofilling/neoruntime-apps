@@ -1,12 +1,12 @@
-# AIPC Application Container Template
-# Standalone image: the AIPC SDK is installed from PyPI (pinned via the
+# NeoRuntime Application Container Template
+# Standalone image: the NeoRuntime SDK is installed from PyPI (pinned via the
 # SDK_VERSION build-arg; the default only matters for a bare `docker build`).
 
 FROM python:3.11-slim-bookworm
 
 LABEL maintainer="you@example.com"
 LABEL version="1.0.0"
-LABEL description="AIPC Application Template"
+LABEL description="NeoRuntime Application Template"
 
 # Install additional system dependencies (if needed)
 # RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -15,7 +15,7 @@ LABEL description="AIPC Application Template"
 
 WORKDIR /app
 
-# AIPC SDK from PyPI
+# NeoRuntime SDK from PyPI
 ARG SDK_VERSION=0.5.0
 RUN pip install --no-cache-dir "neoruntime-ipc-sdk==${SDK_VERSION}"
 

@@ -25,7 +25,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 import numpy as np
 
-# AIPC SDK
+# NeoRuntime SDK
 from neoruntime_ipc_sdk import FdMediaClient as MediaClient, EventClient, Frame
 
 # OpenCV for drawing
@@ -141,7 +141,7 @@ class MJPEGHandler(BaseHTTPRequestHandler):
         html = """<!DOCTYPE html>
 <html>
 <head>
-    <title>AIPC Visualizer</title>
+    <title>NeoRuntime Visualizer</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -176,7 +176,7 @@ class MJPEGHandler(BaseHTTPRequestHandler):
     </style>
 </head>
 <body>
-    <h1>🎥 AIPC Inference Visualizer</h1>
+    <h1>🎥 NeoRuntime Inference Visualizer</h1>
     <div class="container">
         <img src="/stream" alt="Live Stream" />
     </div>
@@ -546,7 +546,7 @@ def main():
 
     logger = logging.getLogger("main")
     logger.info("=" * 50)
-    logger.info("  AIPC Inference Visualizer")
+    logger.info("  NeoRuntime Inference Visualizer")
     logger.info("=" * 50)
     logger.info(f"Stream: {config.stream_id}")
     logger.info(f"Topic: {config.subscribe_topic}")

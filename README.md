@@ -5,7 +5,7 @@
 Official sample applications and templates for the NeoRuntime edge AI platform.
 
 These applications are built against the NeoRuntime SDK and packaged as
-containerized AIPC apps.
+containerized NeoRuntime apps.
 
 ## Downloads
 
@@ -60,8 +60,8 @@ Most apps include a `build.sh` script that packages a container image and
 application manifest for deployment to an NeoRuntime device. Images install
 `neoruntime-ipc-sdk==<version>` from PyPI inside the Dockerfile; the version
 is pinned by `sdk.lock` at the repo root (reproducible, offline-friendly).
-Set `AIPC_SDK_VERSION=<version>` to build against a different release, or
-`AIPC_SDK_VERSION=latest` to float to the newest PyPI release. A weekly
+Set `NEORUNTIME_SDK_VERSION=<version>` to build against a different release, or
+`NEORUNTIME_SDK_VERSION=latest` to float to the newest PyPI release. A weekly
 GitHub Actions probe canaries new SDK releases and opens a bump PR.
 
 Runtime credentials, device addresses, and generated `.neoapp` packages are
@@ -118,7 +118,7 @@ cd showcases/shelf-ops
 
 The Python SDK (`neoruntime-ipc-sdk`) is installed from PyPI during the image
 build, so a clean clone needs no sibling SDK repositories or tokens (version
-pinned by `sdk.lock`; `AIPC_SDK_VERSION` overrides). Model HEFs are committed
+pinned by `sdk.lock`; `NEORUNTIME_SDK_VERSION` overrides). Model HEFs are committed
 per showcase and verified against `models.manifest` at build time, so installed
 bundles run on fresh devices; device-provisioned copies still take precedence
 where present.

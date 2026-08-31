@@ -42,10 +42,10 @@ The build creates `person-detection-1.0.0-arm64.neoapp`.
 ```bash
 # 1. Build the Docker image (installs neoruntime-ipc-sdk from PyPI;
 #    --build-arg SDK_VERSION=<ver> pins a specific release)
-docker buildx build --platform linux/arm64 -t aipc/person-detection:1.0.0 .
+docker buildx build --platform linux/arm64 -t neoruntime/person-detection:1.0.0 .
 
 # 2. Export the image
-docker save aipc/person-detection:1.0.0 -o image.tar
+docker save neoruntime/person-detection:1.0.0 -o image.tar
 
 # 3. Package the app (.neoapp = tar.gz with app.yaml + image.tar + SHA256SUMS)
 mkdir -p person-detection-1.0.0-arm64
@@ -71,7 +71,7 @@ Expected manifest summary:
 App ID: person-detection
 Name: Person Detection
 Version: 1.0.0
-Image: aipc/person-detection:1.0.0
+Image: neoruntime/person-detection:1.0.0
 CPU: 50%
 Memory: 256Mi
 Video stream: cam0_main.raw
@@ -214,7 +214,7 @@ uninstalling it.
 Check container state, container logs, and image architecture.
 
 ```bash
-docker buildx build --platform linux/arm64 -t aipc/person-detection:1.0.0 .
+docker buildx build --platform linux/arm64 -t neoruntime/person-detection:1.0.0 .
 ```
 
 ### SDK sockets are unavailable

@@ -1,4 +1,4 @@
-# AIPC Platform Application Manifest
+# NeoRuntime Platform Application Manifest
 # Full field reference template
 #
 # What each permission actually enforces (with file:line evidence):
@@ -23,7 +23,7 @@ metadata:
 # ============================================
 spec:
   # Container image (required). This is the tag produced by docker build -t.
-  image: aipc/my-app:1.0.0
+  image: neoruntime/my-app:1.0.0
 
   # --------------------------------------------
   # Resource limits

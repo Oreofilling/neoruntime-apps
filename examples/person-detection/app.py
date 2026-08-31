@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Person Detection Application for AIPC Platform
+Person Detection Application for NeoRuntime Platform
 
 Features:
 - Subscribe to video stream inference results
@@ -17,7 +17,7 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-# AIPC SDK
+# NeoRuntime SDK
 from neoruntime_ipc_sdk import (
     InferenceClient,
     EventClient,

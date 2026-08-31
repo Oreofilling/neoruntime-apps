@@ -5,7 +5,7 @@ FROM python:3.11-alpine3.19
 
 LABEL maintainer="opensource@camthink.ai"
 LABEL version="1.0.0"
-LABEL description="AIPC Hello World Application with continuous output"
+LABEL description="NeoRuntime Hello World Application with continuous output"
 
 # Install debugging tools (for container exec debugging)
 RUN apk add --no-cache \

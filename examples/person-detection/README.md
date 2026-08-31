@@ -4,7 +4,7 @@ Complete NeoRuntime sample application for real-time person detection.
 
 ## Features
 
-- Runs AI inference through the AIPC SDK.
+- Runs AI inference through the NeoRuntime SDK.
 - Subscribes to video-frame inference results.
 - Detects people and publishes events.
 - Optionally controls device lights.

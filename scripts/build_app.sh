@@ -1,12 +1,12 @@
 #!/bin/bash
-# Unified app build script for AIPC platform
+# Unified app build script for NeoRuntime platform
 # Usage: ./scripts/build_app.sh <app-dir> [--arch arm64|amd64] [--output ./dist]
 #
 # Automates: SDK install → docker build → save image → package .neoapp → cleanup
 #
 # The SDK is installed from PyPI: neoruntime-ipc-sdk==$SDK_VERSION, where the
 # version resolves via scripts/resolve_sdk_version.sh — sdk.lock by default,
-# AIPC_SDK_VERSION to override (or =latest to float).
+# NEORUNTIME_SDK_VERSION to override (or =latest to float).
 
 set -e
 
@@ -47,7 +47,7 @@ fi
 APP_DIR="$(cd "$APP_DIR" && pwd)"
 APP_NAME="$(basename "$APP_DIR")"
 
-# SDK version: sdk.lock by default; AIPC_SDK_VERSION to override.
+# SDK version: sdk.lock by default; NEORUNTIME_SDK_VERSION to override.
 SDK_VERSION="$("$SCRIPT_DIR/resolve_sdk_version.sh")"
 
 APP_YAML="$APP_DIR/app.yaml"
@@ -60,7 +60,7 @@ VERSION=$(grep -m1 '^\s*version:' "$APP_YAML" | awk '{print $2}' | tr -d '"')
 VERSION="${VERSION:-1.0.0}"
 
 IMAGE_TAG=$(grep -m1 '^\s*image:' "$APP_YAML" | awk '{print $2}' | tr -d '"')
-IMAGE_TAG="${IMAGE_TAG:-aipc/${APP_NAME}:${VERSION}}"
+IMAGE_TAG="${IMAGE_TAG:-neoruntime/${APP_NAME}:${VERSION}}"
 
 OUTPUT_DIR="${OUTPUT_DIR:-$APP_DIR}"
 mkdir -p "$OUTPUT_DIR"
@@ -68,7 +68,7 @@ mkdir -p "$OUTPUT_DIR"
 echo "============================================"
 echo "  Building ${APP_NAME}:${VERSION} for ${ARCH}"
 echo "  Image: ${IMAGE_TAG}"
-echo "  SDK: neoruntime-ipc-sdk ${SDK_VERSION} ($(if [ -n "${AIPC_SDK_VERSION:-}" ]; then echo AIPC_SDK_VERSION; else echo sdk.lock; fi))"
+echo "  SDK: neoruntime-ipc-sdk ${SDK_VERSION} ($(if [ -n "${NEORUNTIME_SDK_VERSION:-}" ]; then echo NEORUNTIME_SDK_VERSION; else echo sdk.lock; fi))"
 echo "============================================"
 
 # Stage models (zoo fetch, sha256-pinned via models.manifest; no-op otherwise)

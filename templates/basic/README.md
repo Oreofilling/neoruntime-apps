@@ -1,6 +1,6 @@
-# AIPC Application Template
+# NeoRuntime Application Template
 
-A template for creating AIPC applications.
+A template for creating NeoRuntime applications.
 
 ## Quick Start
 

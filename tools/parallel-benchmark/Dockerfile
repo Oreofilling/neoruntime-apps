@@ -1,7 +1,7 @@
 FROM python:3.11-slim-bookworm
 
 LABEL version="1.0.0"
-LABEL description="AIPC Parallel Benchmark - Model Parallel Capability Showcase"
+LABEL description="NeoRuntime Parallel Benchmark - Model Parallel Capability Showcase"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash curl procps libglib2.0-0 libsm6 libxext6 libxrender1 \

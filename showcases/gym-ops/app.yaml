@@ -1,4 +1,4 @@
-# AIPC Platform Application Manifest
+# NeoRuntime Platform Application Manifest
 # GymOps Pose Coach - Real-time gym pose analysis, counting, zone occupancy, safety alerts
 
 apiVersion: v1
@@ -9,10 +9,10 @@ metadata:
   name: GymOps Pose Coach
   version: 0.1.0
   description: Real-time gym pose coaching with squat/pushup counting, zone occupancy, and safety alerts
-  author: AIPC Team
+  author: NeoRuntime Team
 
 spec:
-  image: aipc/gym-ops:0.1.0
+  image: neoruntime/gym-ops:0.1.0
 
   resources:
     cpu: "300%"

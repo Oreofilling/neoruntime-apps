@@ -1,5 +1,5 @@
 # Object Detection Application Container
-# ARM64 (Hailo platform) with AIPC SDK
+# ARM64 (Hailo platform) with NeoRuntime SDK
 
 FROM python:3.11-slim-bookworm
 
@@ -16,7 +16,7 @@ WORKDIR /app
 
 # SDK from PyPI, pinned via --build-arg SDK_VERSION by build_app.sh; the
 # default only matters for a bare `docker build` without the helper; the
-# pinned source is sdk.lock at the repo root (AIPC_SDK_VERSION overrides).
+# pinned source is sdk.lock at the repo root (NEORUNTIME_SDK_VERSION overrides).
 ARG SDK_VERSION=0.5.0
 RUN pip install --no-cache-dir "neoruntime-ipc-sdk==${SDK_VERSION}"
 

@@ -1,11 +1,11 @@
 # Person Detection Application Container
-# For ARM64 (Hailo platform) with AIPC SDK
+# For ARM64 (Hailo platform) with NeoRuntime SDK
 
 FROM python:3.11-slim-bookworm
 
 LABEL maintainer="opensource@camthink.ai"
 LABEL version="1.0.0"
-LABEL description="Person Detection Application with AIPC SDK"
+LABEL description="Person Detection Application with NeoRuntime SDK"
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -23,7 +23,7 @@ WORKDIR /app
 
 # SDK from PyPI, pinned via --build-arg SDK_VERSION by build_app.sh; the
 # default only matters for a bare `docker build` without the helper; the
-# pinned source is sdk.lock at the repo root (AIPC_SDK_VERSION overrides).
+# pinned source is sdk.lock at the repo root (NEORUNTIME_SDK_VERSION overrides).
 ARG SDK_VERSION=0.5.0
 RUN pip install --no-cache-dir "neoruntime-ipc-sdk==${SDK_VERSION}"
 
