@@ -124,16 +124,16 @@ class ObjectDetectionApp:
             self.print_statistics()
         
         # Publish detection event
-        self.publish_detection_event(frame, filtered_objects)
+        self.publish_detection_event(frame, result, filtered_objects)
         
         # Handle special cases
         self.handle_detections(filtered_objects)
     
-    def publish_detection_event(self, frame, objects):
+    def publish_detection_event(self, frame, result, objects):
         """Publish detection event"""
         event_data = {
-            "frame_sequence": frame.sequence,
-            "timestamp": frame.timestamp_ns,
+            "frame_sequence": frame,
+            "timestamp": result.timestamp_ns,
             "objects": [
                 {
                     "id": obj.track_id,

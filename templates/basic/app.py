@@ -45,16 +45,16 @@ class TemplateApp:
         
         try:
             # Subscribe to AI inference results
-            for frame, result in self.inference.subscribe(
+            for frame_seq, result in self.inference.subscribe(
                 stream="cam0_main",
                 model="person_v1",
                 fps=10
             ):
                 if not self.running:
                     break
-                
+
                 # Process the inference result
-                self.process_frame(frame, result)
+                self.process_frame(frame_seq, result)
                 
         except KeyboardInterrupt:
             print(f"\n[{self.app_id}] Interrupted by user")
@@ -65,34 +65,35 @@ class TemplateApp:
         finally:
             self.cleanup()
     
-    def process_frame(self, frame, result):
+    def process_frame(self, frame_seq, result):
         """
-        Process each frame and its inference result
-        
+        Process each frame's inference result
+
         Args:
-            frame: Video frame (numpy array)
+            frame_seq: Frame sequence number (int) — subscribe() yields
+                (sequence, InferenceResult) tuples, not frame objects
             result: InferenceResult object
         """
         # Example: Print detection results
         if len(result.objects) > 0:
-            print(f"[Frame {frame.sequence}] Detected {len(result.objects)} objects:")
-            
+            print(f"[Frame {frame_seq}] Detected {len(result.objects)} objects:")
+
             for obj in result.objects:
                 print(f"  - {obj.label}: {obj.score:.2f} at {obj.bbox}")
-                
+
                 # Example: React to person detection
                 if obj.label == "person" and obj.score > 0.8:
-                    self.on_person_detected(frame, obj)
-        
+                    self.on_person_detected(frame_seq, obj)
+
         # Publish custom events
         if result.has_person():
             self.events.publish(f"app/{self.app_id}/person_detected", {
-                "frame": frame.sequence,
-                "timestamp": frame.timestamp_ns,
+                "frame": frame_seq,
+                "timestamp": result.timestamp_ns,
                 "count": result.count_by_label("person")
             })
     
-    def on_person_detected(self, frame, person):
+    def on_person_detected(self, frame_seq, person):
         """
         Handle person detection
         

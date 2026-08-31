@@ -93,13 +93,13 @@ class PeopleCountingApp:
         
         # Print log
         if person_count > 0:
-            print(f"[Frame {frame.sequence}] "
+            print(f"[Frame {frame}] "
                   f"Current: {person_count}, "
                   f"Average: {avg_count:.1f}")
-        
+
         # Send statistics event
         self.events.publish("app/people_counting/stats", {
-            "timestamp": frame.timestamp_ns,
+            "timestamp": result.timestamp_ns,
             "current_count": person_count,
             "average_count": avg_count,
             "threshold": self.threshold
