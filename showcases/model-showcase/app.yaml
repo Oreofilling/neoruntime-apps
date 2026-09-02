@@ -7,12 +7,12 @@ kind: Application
 metadata:
   id: model-showcase
   name: AI Model Showcase
-  version: 1.2.1
+  version: 1.3.0
   description: Real-time AI model showcase with auto-registration and type-specific visualization
   author: NeoRuntime Team
 
 spec:
-  image: neoruntime/model-showcase:1.2.1
+  image: neoruntime/model-showcase:1.3.0
 
   resources:
     cpu: "300%"

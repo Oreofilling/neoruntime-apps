@@ -1,6 +1,6 @@
 FROM python:3.11-slim-bookworm
 
-LABEL version="1.2.1"
+LABEL version="1.3.0"
 LABEL description="AI Model Showcase - Dynamic model discovery, RTSP streaming support"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -40,6 +40,11 @@ COPY mediamtx.yml /app/mediamtx.yml
 COPY ocr_dict.txt /app/ocr_dict.txt
 COPY templates/ /app/templates/
 COPY static/ /app/static/
+
+# Bundled models (zoo rows via fetch_models.sh + vendored device artifacts).
+# NOT /opt/aipc/models — app.yaml bind-mounts the host model store there,
+# which would shadow image content.
+COPY models/ /opt/aipc/bundled-models/
 
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 

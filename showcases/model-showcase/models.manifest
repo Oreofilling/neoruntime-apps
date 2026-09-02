@@ -1,0 +1,38 @@
+# Models staged for the model-showcase image by scripts/fetch_models.sh
+# (TSV data rows: sha256 <tab> filename <tab> url; # lines are comments).
+#
+# Zoo rows cover the two compiles whose hashes are proven identical to the
+# device copies (cross-checked against the parking-lot / shelf-ops pins):
+#   - scdepthv3.hef                              (parking-lot pin)
+#   - clip_vit_b_32_image_encoder_nv12.hef       (shelf-ops pin; prompts are
+#     self-generated so a fresh device can boot from the zoo artifact)
+#
+# Vendored exact device artifacts in models/ (no rows here, kept via the
+# .gitignore negation). Same-name zoo compiles DIFFER from these — the
+# MODEL_CATALOG metadata in main.py (input dims/format, postprocess) was
+# validated against the device builds, so do not swap for zoo downloads:
+#   - hailo_yolov8n_384_640.hef      640x384 fixed-res compile (same artifact
+#                                     as gym-ops; generic zoo yolov8n is 640x640)
+#   - yolov5m_vehicles.hef           custom 1-class compile (same as parking-lot)
+#   - tiny_yolov4_license_plates.hef license-plate detector (same as parking-lot)
+#   - paddle_ocr_v5_mobile_recognition_nv12.hef  plate OCR (same as parking-lot)
+#   - linknet_mbv1_ss_dpm_256.hef    device artifact 93.72 2026-09-02, no zoo row
+#                                     at v5.3.0/hailo15h
+#   - face_landmarks_lite.hef        device artifact 93.72 2026-09-02
+#                                     (zoo build hashes differently)
+#   - lprnet.hef                     device artifact 93.72 2026-09-02
+#                                     (zoo build hashes differently)
+#   - paddle_ocr_v5_mobile_detection.hef  device artifact 93.72 2026-09-02
+#                                     (zoo build hashes differently)
+#
+# Deliberately NOT bundled (main.py falls back to the device store):
+#   - vit_large.hef                  ~300MB+ classification compile
+#   - Qwen3-VL-2B-Instruct.hef       GB-scale genai; devices ship it built in
+#                                     and _is_available() treats genai as
+#                                     always present.
+#
+# Zoo pinning rationale: v5.3.0/hailo15h matches the device firmware line
+# (HailoRT 5.3.0 on HAILO15H). Re-verify with `hailortcli parse-hef` on
+# target hardware before bumping.
+0c7c7e5958e75f722bd3355106dba21d2c13f737dab3f627701844b34ed9f7e7	scdepthv3.hef	https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/v5.3.0/hailo15h/scdepthv3.hef
+ecbf4a201272548c8d5a33a30ab138c7a95bad68e15f7196aa4c2458fa7d02d6	clip_vit_b_32_image_encoder_nv12.hef	https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/v5.3.0/hailo15h/clip_vit_b_32_image_encoder_nv12.hef

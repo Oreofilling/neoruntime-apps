@@ -562,8 +562,23 @@ def _select_model_root() -> str:
 _MODEL_ROOT = _select_model_root()
 
 
+# Bundled model copies ship in the image at a flat layout (Dockerfile COPY
+# models/ /opt/aipc/bundled-models/). NOT /opt/aipc/models — app.yaml
+# bind-mounts the host model store there, which would shadow image content.
+_BUNDLED_MODEL_ROOT = "/opt/aipc/bundled-models"
+
+
 def _model_path(category: str, filename: str) -> str:
-    return os.path.join(_MODEL_ROOT, category, filename)
+    """Host-provisioned copy first; image-bundled fallback otherwise.
+
+    Devices that pre-provision /data/aipc/models keep using their own copy;
+    fresh installs fall back to the file bundled in the image so installs
+    are plug-and-play (same pattern as gym-ops _resolve_model_path).
+    """
+    host = os.path.join(_MODEL_ROOT, category, filename)
+    if os.path.isfile(host):
+        return host
+    return os.path.join(_BUNDLED_MODEL_ROOT, filename)
 
 
 MODEL_CATALOG: List[Dict[str, Any]] = [
