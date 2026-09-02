@@ -9,7 +9,8 @@ __pycache__/
 *.egg-info/
 build/
 dist/
-*.aipc
+*.neoapp
+*.nrt
 *.tar
 *.tar.*
 *.whl
@@ -18,4 +19,14 @@ dist/
 *.key
 .tmp-*
 .tmp.*
-**/.aipc-build/
+
+# Zoo-fetched model files (scripts/fetch_models.sh); vendored files are
+# re-included below and committed.
+examples/*/models/*.hef
+showcases/*/models/*.hef
+!examples/object-detection/models/*.hef
+!examples/people-counting/models/*.hef
+!examples/person-detection/models/*.hef
+!showcases/parking-lot/models/*.hef
+!showcases/shelf-ops/models/*.hef
+!showcases/gym-ops/models/*.hef

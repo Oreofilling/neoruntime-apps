@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AI Model Showcase for AIPC Platform
+AI Model Showcase for NeoRuntime Platform
 
 Real-time AI inference showcase that bundles model metadata, auto-registers
 models with ai-runtime at startup, and renders type-specific visualizations.
@@ -39,7 +39,7 @@ from flask import Flask, render_template, request, jsonify, Response
 from flask_sock import Sock
 from PIL import Image, ImageDraw, ImageFont
 
-from hailo_ipc_sdk import (
+from neoruntime_ipc_sdk import (
     FdMediaClient,
     InferenceClient,
     BatchInferItem,
@@ -242,7 +242,7 @@ class GalleryManager:
 # Frame Source abstraction — camera or video file
 # ---------------------------------------------------------------------------
 
-_VIDEO_DIR = os.environ.get("VIDEO_DIR", "/tmp/aipc-videos")
+_VIDEO_DIR = os.environ.get("VIDEO_DIR", "/tmp/neoruntime-videos")
 os.makedirs(_VIDEO_DIR, exist_ok=True)
 _MAX_VIDEO_SIZE = 500 * 1024 * 1024  # 500 MB
 
@@ -250,7 +250,7 @@ _MAX_VIDEO_SIZE = 500 * 1024 * 1024  # 500 MB
 # Uploaded stills live here ephemerally (tmpfs); they are not persisted across
 # restarts. Decoded to BGR, run through the same single-shot infer + overlay
 # pipeline as the live loop, then returned as one annotated JPEG.
-_IMAGE_DIR = os.environ.get("IMAGE_DIR", "/tmp/aipc-images")
+_IMAGE_DIR = os.environ.get("IMAGE_DIR", "/tmp/neoruntime-images")
 os.makedirs(_IMAGE_DIR, exist_ok=True)
 _MAX_IMAGE_SIZE = 50 * 1024 * 1024  # 50 MB
 _ALLOWED_IMAGE_EXT = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
@@ -1685,7 +1685,7 @@ class ModelShowcase:
             l.strip() for l in default_labels.split(",") if l.strip()
         ]
 
-        gallery_dir = os.environ.get("GALLERY_DIR", "/tmp/aipc-gallery")
+        gallery_dir = os.environ.get("GALLERY_DIR", "/tmp/neoruntime-gallery")
         self.gallery = GalleryManager(
             data_dir=gallery_dir,
             max_images=int(os.environ.get("GALLERY_MAX_IMAGES", "5000")),

@@ -1,4 +1,4 @@
-# AIPC Platform Application Manifest
+# NeoRuntime Platform Application Manifest
 # Model Showcase - Auto-registers models and provides type-specific visualization
 
 apiVersion: v1
@@ -9,10 +9,10 @@ metadata:
   name: AI Model Showcase
   version: 1.2.1
   description: Real-time AI model showcase with auto-registration and type-specific visualization
-  author: AIPC Team
+  author: NeoRuntime Team
 
 spec:
-  image: aipc/model-showcase:1.2.1
+  image: neoruntime/model-showcase:1.2.1
 
   resources:
     cpu: "300%"

@@ -9,8 +9,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY .aipc-build/hailo_ipc_sdk-*.whl /tmp/
-RUN pip install --no-cache-dir /tmp/hailo_ipc_sdk-*.whl && rm -f /tmp/hailo_ipc_sdk-*.whl
+# SDK from PyPI, pinned via --build-arg SDK_VERSION by build_showcase_artifacts.sh;
+# the default only matters for a bare `docker build` without the helper;
+# the pinned source is sdk.lock at the repo root (NEORUNTIME_SDK_VERSION overrides).
+ARG SDK_VERSION=0.5.0
+RUN pip install --no-cache-dir "neoruntime-ipc-sdk==${SDK_VERSION}"
 
 COPY requirements.txt /app/
 RUN pip install --no-cache-dir --retries 5 --timeout 120 -r requirements.txt
@@ -23,6 +26,9 @@ COPY static/ /app/static/
 # so also place them under the package directory for Jinja2 to find them.
 COPY templates/ /app/parking_lot/templates/
 COPY static/ /app/parking_lot/static/
+
+# Bundled models (fetch_models.sh + vendored device artifacts, see models.manifest)
+COPY models/ /opt/aipc/models/
 
 RUN mkdir -p /app/uploads && useradd -m -u 1000 appuser \
     && chown -R appuser:appuser /app

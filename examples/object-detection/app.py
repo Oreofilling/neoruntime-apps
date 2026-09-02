@@ -6,10 +6,11 @@ Detects and tracks objects in video stream.
 Publishes detection events and optionally controls devices.
 """
 
+import os
 import time
 import signal
 from collections import defaultdict
-from hailo_ipc_sdk import InferenceClient, EventClient, DeviceClient
+from neoruntime_ipc_sdk import InferenceClient, EventClient, DeviceClient
 
 
 class ObjectTracker:
@@ -78,8 +79,11 @@ class ObjectDetectionApp:
         
         try:
             for frame, result in self.inference.subscribe(
-                stream="cam0_main",
-                model="person_vehicle_v1",
+                # Stream id from env (app.yaml STREAM_ID; devices expose
+                # main/sub, dev rigs used cam0_main)
+                stream=os.environ.get("STREAM_ID", "cam0_main"),
+                # Resolved id from spec.models (falls back to the bundled id)
+                model=os.environ.get("AIPC_MODEL_detector", "person_vehicle_v1"),
                 fps=15
             ):
                 if not self.running:
@@ -120,16 +124,16 @@ class ObjectDetectionApp:
             self.print_statistics()
         
         # Publish detection event
-        self.publish_detection_event(frame, filtered_objects)
+        self.publish_detection_event(frame, result, filtered_objects)
         
         # Handle special cases
         self.handle_detections(filtered_objects)
     
-    def publish_detection_event(self, frame, objects):
+    def publish_detection_event(self, frame, result, objects):
         """Publish detection event"""
         event_data = {
-            "frame_sequence": frame.sequence,
-            "timestamp": frame.timestamp_ns,
+            "frame_sequence": frame,
+            "timestamp": result.timestamp_ns,
             "objects": [
                 {
                     "id": obj.track_id,

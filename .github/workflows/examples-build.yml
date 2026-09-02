@@ -1,0 +1,104 @@
+name: Build examples
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "examples/**"
+      - "scripts/build_app.sh"
+      - "scripts/fetch_models.sh"
+      - "scripts/resolve_sdk_version.sh"
+      - "scripts/smoke_image.sh"
+      - "sdk.lock"
+      - ".github/workflows/examples-build.yml"
+  pull_request:
+    paths:
+      - "examples/**"
+      - "scripts/build_app.sh"
+      - "scripts/fetch_models.sh"
+      - "scripts/resolve_sdk_version.sh"
+      - "scripts/smoke_image.sh"
+      - "sdk.lock"
+      - ".github/workflows/examples-build.yml"
+  workflow_dispatch:
+    inputs:
+      example:
+        description: Optional single example name. Leave empty to build all examples.
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: examples-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      examples: ${{ steps.discover.outputs.examples }}
+
+    steps:
+      - name: Checkout apps repository
+        uses: actions/checkout@v4
+
+      - name: Discover examples
+        id: discover
+        env:
+          REQUESTED_EXAMPLE: ${{ inputs.example }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "$REQUESTED_EXAMPLE" ]; then
+            test -f "examples/$REQUESTED_EXAMPLE/Dockerfile"
+            test -f "examples/$REQUESTED_EXAMPLE/app.yaml"
+            printf 'examples=["%s"]\n' "$REQUESTED_EXAMPLE" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          from pathlib import Path
+
+          examples = [
+              path.name
+              for path in sorted(Path("examples").iterdir())
+              if path.is_dir()
+              and (path / "Dockerfile").is_file()
+              and (path / "app.yaml").is_file()
+          ]
+          print(f"examples={json.dumps(examples)}")
+          PY
+
+  build:
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        example: ${{ fromJSON(needs.discover.outputs.examples) }}
+
+    steps:
+      - name: Checkout apps repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build example (arm64)
+        run: |
+          set -euo pipefail
+          ./examples/${{ matrix.example }}/build.sh arm64
+
+      - name: Smoke test image
+        run: |
+          set -euo pipefail
+          ./scripts/smoke_image.sh examples/${{ matrix.example }}

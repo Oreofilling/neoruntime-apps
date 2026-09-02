@@ -1,5 +1,5 @@
 #!/bin/sh
-# Hello World application entrypoint for AIPC Platform
+# Hello World application entrypoint for NeoRuntime Platform
 # Supports both running app.py and debugging mode
 
 if [ "$1" = "debug" ] || [ "$1" = "/bin/bash" ] || [ "$1" = "/bin/sh" ]; then

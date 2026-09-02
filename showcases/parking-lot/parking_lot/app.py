@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
-from hailo_ipc_sdk import (
+from neoruntime_ipc_sdk import (
     BatchInferItem,
     Config,
     EventClient,

@@ -9,9 +9,10 @@ Features:
 4. Control lights for alerts when threshold exceeded
 """
 
+import os
 import time
 from collections import deque
-from hailo_ipc_sdk import InferenceClient, EventClient, DeviceClient
+from neoruntime_ipc_sdk import InferenceClient, EventClient, DeviceClient
 
 
 class PeopleCounter:
@@ -65,8 +66,11 @@ class PeopleCountingApp:
         try:
             # Subscribe to person detection results
             for frame, result in self.inference.subscribe(
-                stream="cam0_main",
-                model="person_v1",
+                # Stream id from env (app.yaml STREAM_ID; devices expose
+                # main/sub, dev rigs used cam0_main)
+                stream=os.environ.get("STREAM_ID", "cam0_main"),
+                # Resolved id from spec.models (falls back to the bundled id)
+                model=os.environ.get("AIPC_MODEL_detector", "person_v1"),
                 fps=10
             ):
                 self.process_frame(frame, result)
@@ -89,13 +93,13 @@ class PeopleCountingApp:
         
         # Print log
         if person_count > 0:
-            print(f"[Frame {frame.sequence}] "
+            print(f"[Frame {frame}] "
                   f"Current: {person_count}, "
                   f"Average: {avg_count:.1f}")
-        
+
         # Send statistics event
         self.events.publish("app/people_counting/stats", {
-            "timestamp": frame.timestamp_ns,
+            "timestamp": result.timestamp_ns,
             "current_count": person_count,
             "average_count": avg_count,
             "threshold": self.threshold

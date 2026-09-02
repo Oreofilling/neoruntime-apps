@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CLIP Zero-Shot Viewer Application for AIPC Platform
+CLIP Zero-Shot Viewer Application for NeoRuntime Platform
 
 Features:
 - Real-time zero-shot image classification using CLIP model (NPU)
@@ -28,7 +28,7 @@ from typing import Optional, List, Dict, Any
 
 from flask import Flask, render_template, request, jsonify, Response
 
-from hailo_ipc_sdk import InferenceClient, Config
+from neoruntime_ipc_sdk import InferenceClient, Config
 
 # ---------------------------------------------------------------------------
 # Logging

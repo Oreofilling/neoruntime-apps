@@ -5,7 +5,7 @@ metadata:
   name: RTSP Streaming Server
   version: 1.0.0
   description: RTSP server plugin - receives encoded video from camera-daemon and serves RTSP clients
-  author: AIPC Platform
+  author: NeoRuntime Platform
 
 spec:
   image: registry.local/plugin-rtsp:1.0.0

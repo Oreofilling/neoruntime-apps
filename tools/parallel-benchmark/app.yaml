@@ -6,11 +6,11 @@ metadata:
   name: Parallel Benchmark
   version: 1.0.0
   description: Model parallel inference capability showcase with real-time performance dashboard
-  author: AIPC Team
+  author: NeoRuntime Team
   email: opensource@camthink.ai
 
 spec:
-  image: aipc/parallel-benchmark:1.0.0
+  image: neoruntime/parallel-benchmark:1.0.0
 
   resources:
     cpu: "80%"

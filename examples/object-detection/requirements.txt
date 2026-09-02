@@ -1,0 +1,2 @@
+# Python dependencies for Object Detection Application
+# SDK is installed locally from the included package

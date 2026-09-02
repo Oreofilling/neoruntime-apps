@@ -21,7 +21,7 @@ import pytest
 from unittest.mock import MagicMock
 
 # --- stub container-only / unavailable imports so `import main` succeeds ----
-for _name in ("hailo_ipc_sdk", "flask_sock"):
+for _name in ("neoruntime_ipc_sdk", "flask_sock"):
     if _name not in sys.modules:
         _stub = types.ModuleType(_name)
         _stub.__getattr__ = lambda attr: MagicMock()  # any name -> MagicMock

@@ -6,7 +6,7 @@ Covers:
 - ``POST /api/image/upload``: happy path (annotated JPEG + X-Infer-Stats header)
   and negative cases (missing file, bad extension, decode failure, no model loaded).
 
-Container-only imports (hailo_ipc_sdk, flask_sock) are stubbed so ``import main``
+Container-only imports (neoruntime_ipc_sdk, flask_sock) are stubbed so ``import main``
 works in a plain unit-test environment.
 """
 
@@ -24,7 +24,7 @@ import pytest
 from PIL import Image
 
 # --- stub container-only / unavailable imports so `import main` succeeds ----
-for _name in ("hailo_ipc_sdk", "flask_sock"):
+for _name in ("neoruntime_ipc_sdk", "flask_sock"):
     if _name not in sys.modules:
         _stub = types.ModuleType(_name)
         _stub.__getattr__ = lambda attr: MagicMock()  # any name -> MagicMock

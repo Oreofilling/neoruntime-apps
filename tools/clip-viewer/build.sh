@@ -13,39 +13,40 @@ echo "============================================"
 echo "  Building ${APP_NAME}:${VERSION} for ${ARCH}"
 echo "============================================"
 
-# Copy SDK
-echo "Copying SDK..."
-cp -r "${SCRIPT_DIR}/../../sdk/python/hailo_ipc_sdk" "${SCRIPT_DIR}/"
-cp "${SCRIPT_DIR}/../../sdk/python/setup.py" "${SCRIPT_DIR}/"
-cp "${SCRIPT_DIR}/../../sdk/python/README.md" "${SCRIPT_DIR}/"
+# SDK comes from PyPI inside the Dockerfile (pinned via SDK_VERSION build-arg)
+SDK_VERSION="$("${SCRIPT_DIR}/../../scripts/resolve_sdk_version.sh")"
 
 # Build Docker image
 echo "Building Docker image..."
 if [ "$ARCH" = "arm64" ]; then
-    docker buildx build --platform linux/arm64 --load -t "aipc/${APP_NAME}:${VERSION}" .
+    docker buildx build --platform linux/arm64 --load --build-arg SDK_VERSION="${SDK_VERSION}" -t "neoruntime/${APP_NAME}:${VERSION}" .
 else
-    docker build -t "aipc/${APP_NAME}:${VERSION}" .
+    docker build --build-arg SDK_VERSION="${SDK_VERSION}" -t "neoruntime/${APP_NAME}:${VERSION}" .
 fi
 
 # Export image
 echo "Exporting image..."
-docker save "aipc/${APP_NAME}:${VERSION}" -o image.tar
+docker save "neoruntime/${APP_NAME}:${VERSION}" -o image.tar
 
-# Create .aipc package
-echo "Creating .aipc package..."
-rm -f "${APP_NAME}.aipc"
-zip -r "${APP_NAME}.aipc" app.yaml image.tar
-
-# Cleanup
-rm -rf hailo_ipc_sdk setup.py README.md image.tar
+# Create .neoapp package (tar.gz, same layout as build_app.sh bundles)
+echo "Creating .neoapp package..."
+PACKAGE_DIR="${APP_NAME}-${VERSION}-${ARCH}"
+NRT_PACKAGE="${PACKAGE_DIR}.neoapp"
+rm -rf .tmp-nrt-staging "${NRT_PACKAGE}"
+mkdir -p ".tmp-nrt-staging/${PACKAGE_DIR}"
+cp app.yaml ".tmp-nrt-staging/${PACKAGE_DIR}/app.yaml"
+mv image.tar ".tmp-nrt-staging/${PACKAGE_DIR}/image.tar"
+(cd ".tmp-nrt-staging/${PACKAGE_DIR}" && sha256sum * > SHA256SUMS)
+tar -C .tmp-nrt-staging -czf "${NRT_PACKAGE}" "$PACKAGE_DIR"
+rm -rf .tmp-nrt-staging
 
 echo ""
 echo "============================================"
 echo "  Build complete!"
-echo "  Package: ${APP_NAME}.aipc"
-echo "  Size: $(du -h ${APP_NAME}.aipc | cut -f1)"
+echo "  Package: ${NRT_PACKAGE}"
+echo "  Size: $(du -h ${NRT_PACKAGE} | cut -f1)"
 echo "============================================"
 echo ""
 echo "To install on device:"
-echo "  1. Web UI: Upload ${APP_NAME}.aipc"
-echo "  2. API: curl -X POST http://<device>:8080/api/v1/apps -F 'app=@${APP_NAME}.aipc'"
+echo "  1. Web UI: upload ${NRT_PACKAGE} in the app import dialog"
+echo "  2. CLI: tar xzf ${NRT_PACKAGE} && aipc-cli app install <app-id> ${PACKAGE_DIR}/app.yaml ${PACKAGE_DIR}/image.tar"

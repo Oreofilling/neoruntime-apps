@@ -1,4 +1,4 @@
-# AIPC Platform Application Manifest
+# NeoRuntime Platform Application Manifest
 # Parking Lot Full Element Extraction
 
 apiVersion: v1
@@ -9,7 +9,7 @@ metadata:
   name: Parking Lot Full Element Extraction
   version: 1.0.0
   description: "Parking-lot element extraction with vehicle attributes, depth anti-spoofing, and plate OCR."
-  author: AIPC Team
+  author: NeoRuntime Team
   email: opensource@camthink.ai
 
 spec:
@@ -18,6 +18,26 @@ spec:
   resources:
     cpu: "200%"
     memory: "2Gi"
+
+  # Model dependencies bundled in the image (models/) so installs are
+  # plug-and-play. Only the two platform-safe models are declared here:
+  # scdepthv3 needs no postprocess, and yolov5m_vehicles gets its variant
+  # (postprocess) blob re-applied by the app's runtime re-registration.
+  # license_plate_det / plate_recognition stay OUT of spec.models: an empty
+  # variant transient registration would apply the default yolov8 backend
+  # (tensor mismatch) and the app skips re-registering models without a
+  # variant — they keep app-side runtime registration + explicit auth below.
+  models:
+    vehicle:
+      id: yolov5m_vehicles
+      path: /opt/aipc/models/yolov5m_vehicles.hef
+      type: detection
+      required: true
+    depth:
+      id: scdepthv3
+      path: /opt/aipc/models/scdepthv3.hef
+      type: depth
+      required: true
 
   permissions:
     video:

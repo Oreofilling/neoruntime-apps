@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Hello World Application for AIPC Platform
+Hello World Application for NeoRuntime Platform
 
 A minimal example demonstrating the basic application structure.
 Prints hello world with counter continuously.
@@ -25,7 +25,7 @@ class HelloWorldApp:
         signal.signal(signal.SIGTERM, self._signal_handler)
 
         print("=" * 50)
-        print("  AIPC Hello World Application")
+        print("  NeoRuntime Hello World Application")
         print(f"  App ID: {self.app_id}")
         print(f"  Platform: {os.uname().machine}")
         print("=" * 50)
@@ -46,7 +46,7 @@ class HelloWorldApp:
             while self.running:
                 self.counter += 1
                 timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-                print(f"[{timestamp}] #{self.counter:06d} - Hello World from AIPC!")
+                print(f"[{timestamp}] #{self.counter:06d} - Hello World from NeoRuntime!")
                 time.sleep(1)
 
         except KeyboardInterrupt:

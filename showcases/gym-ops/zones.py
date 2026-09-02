@@ -7,10 +7,24 @@ LONG_OCCUPATION_SECONDS.
 """
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 
 from pose import Pt, body_center, point_in_polygon, normalize_polygon, KeyPoints
+
+# Low-saturation zone identity colors (hex), kept in sync with the web theme
+# tokens in static/css/app.css. Assigned by config order, cycling.
+ZONE_PALETTE: list[str] = [
+    "#6ea8ff",  # soft blue   (--accent)
+    "#3ecf8e",  # soft green  (--ok)
+    "#f5b342",  # soft amber  (--warn)
+    "#b48cff",  # soft violet
+    "#4cc3d9",  # soft cyan
+    "#ff8f6b",  # soft coral
+]
+
+_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 @dataclass
@@ -19,6 +33,8 @@ class Zone:
     name: str
     polygon: list[tuple[float, float]]   # normalized (x,y) vertices
     capacity: int = 0                     # 0 = unlimited
+    color: str = ""                       # hex "#rrggbb"; "" = palette default
+    forbidden: bool = False               # staff-only / no-go area
 
 
 @dataclass
@@ -45,12 +61,17 @@ class ZoneManager:
     def __init__(self, zones_cfg: list[dict], equipment_cfg: list[dict],
                  occupancy_seconds: int, long_occupation_seconds: int):
         self.zones: list[Zone] = []
-        for z in zones_cfg:
+        for i, z in enumerate(zones_cfg):
+            color = str(z.get("color", "") or "")
+            if not _HEX_COLOR_RE.match(color):
+                color = ZONE_PALETTE[i % len(ZONE_PALETTE)]
             self.zones.append(Zone(
                 id=str(z.get("id", "")),
                 name=str(z.get("name", z.get("id", ""))),
                 polygon=normalize_polygon(z.get("polygon", [])),
                 capacity=int(z.get("capacity", 0)),
+                color=color,
+                forbidden=bool(z.get("forbidden", False)),
             ))
         self.equipment: list[Equipment] = [
             Equipment(id=str(e.get("id", "")),
@@ -248,4 +269,10 @@ class ZoneManager:
             "crowded": crowded,
             "equipment": equipment_snap,
             "events": events,
+            # Per-tracker keypoint-based zone assignment (zone_id or None) for
+            # downstream consumers (trajectory tracking).
+            "assignments": {
+                tid: (z.id if z is not None else None)
+                for tid, z in zone_assignment.items()
+            },
         }

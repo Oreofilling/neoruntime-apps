@@ -1,5 +1,5 @@
 *.tar
-*.aipc
+*.neoapp
 .git
 __pycache__
 *.pyc
