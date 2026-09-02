@@ -581,6 +581,36 @@ def _model_path(category: str, filename: str) -> str:
     return os.path.join(_BUNDLED_MODEL_ROOT, filename)
 
 
+def _entry_available(m: Dict[str, Any]) -> bool:
+    """Whether every file a catalog entry needs exists on this device.
+
+    Genai is always considered available: it is served interactively and a
+    missing weight file is surfaced as an early warning instead (see
+    _discover_models) rather than hiding the chat entry.
+    """
+    if m.get("type") == "genai":
+        return True
+    if "stages" in m:
+        return all(os.path.isfile(s["path"]) for s in m["stages"])
+    return os.path.isfile(m.get("path", ""))
+
+
+def _missing_models() -> List[Dict[str, Any]]:
+    """Catalog entries this device can't run yet, with acquisition hints.
+
+    Backs the /api/models ``missing`` list so the UI can show a dimmed
+    "not installed" card with copy-paste instructions instead of silently
+    hiding the model. Genai entries are excluded (see _entry_available);
+    they stay listed with a warning badge instead.
+    """
+    keep = ("id", "name", "type", "description", "category", "acquisition")
+    return [
+        {k: m[k] for k in keep if k in m}
+        for m in MODEL_CATALOG
+        if not _entry_available(m)
+    ]
+
+
 MODEL_CATALOG: List[Dict[str, Any]] = [
     {
         "id": "yolov8n_detection",
@@ -615,6 +645,16 @@ MODEL_CATALOG: List[Dict[str, Any]] = [
         "name": "ViT Classification",
         "description": "Image classification — identify the main subject in the scene",
         "category": "classification",
+        # Not image-bundled (267 MB would bloat the install package). When the
+        # file is absent the UI shows a "not installed" card built from these
+        # hints instead of silently hiding the entry. sha256 verified
+        # byte-identical to the device factory artifact.
+        "acquisition": {
+            "url": "https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/v5.3.0/hailo15h/vit_large.hef",
+            "sha256": "e5160e0c3647315bb027ac162200fa90860a708ebf97daa4bbdbe9858c9cea89",
+            "size_bytes": 280158208,
+            "target": "/data/aipc/models/classification/vit_large.hef",
+        },
     },
     {
         "id": "linknet_segmentation",
@@ -730,6 +770,14 @@ MODEL_CATALOG: List[Dict[str, Any]] = [
         "optimize_memory": False,
         "vlm_width": 512,
         "vlm_height": 288,
+        # GB-scale weight file ships with the factory device image, never in
+        # the app package. Devices lacking it keep the chat entry (genai is
+        # always "available") but get an early warning badge + copy hint.
+        "acquisition": {
+            "source": "device",
+            "size_bytes": 3185773502,
+            "target": "/data/aipc/models/genai/Qwen3-VL-2B-Instruct.hef",
+        },
     },
 ]
 LPR_CHARSET = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ-"
@@ -1748,18 +1796,16 @@ class ModelShowcase:
     def _discover_models(self) -> None:
         global AVAILABLE_MODELS
 
-        def _is_available(m: Dict[str, Any]) -> bool:
-            if m.get("type") == "genai":
-                return True
-            if "stages" in m:
-                return all(os.path.isfile(s["path"]) for s in m["stages"])
-            return os.path.isfile(m.get("path", ""))
-
-        AVAILABLE_MODELS = [
-            {k: v for k, v in m.items() if k not in ("postprocess_json",)}
-            for m in MODEL_CATALOG
-            if _is_available(m)
-        ]
+        AVAILABLE_MODELS = []
+        for m in MODEL_CATALOG:
+            if not _entry_available(m):
+                continue
+            entry = {k: v for k, v in m.items() if k not in ("postprocess_json",)}
+            if entry.get("type") == "genai" and not os.path.isfile(entry.get("path", "")):
+                # Early signal on fresh devices: the chat entry stays listed,
+                # but inference would fail until the weight file is provisioned.
+                entry["warning"] = "model file missing on this device"
+            AVAILABLE_MODELS.append(entry)
 
         self._populate_input_shapes()
 
@@ -1769,6 +1815,27 @@ class ModelShowcase:
             self.current_model_type = AVAILABLE_MODELS[0]["type"]
             self._current_model_info = AVAILABLE_MODELS[0]
         logger.info("Available models: %s", [m["id"] for m in AVAILABLE_MODELS])
+
+    def refresh_model_paths(self) -> List[str]:
+        """Re-resolve catalog paths against the host store, then re-discover.
+
+        POST /api/models/refresh calls this after the operator drops a file
+        into /data/aipc/models: catalog paths are evaluated at import time,
+        so a freshly provisioned host file is invisible until this runs (or
+        the app restarts). Returns the ids that became available.
+
+        Pipeline stages are always image-bundled, so only single-file and
+        genai entries need re-resolution.
+        """
+        before = {m["id"] for m in AVAILABLE_MODELS}
+        for m in MODEL_CATALOG:
+            if "stages" in m or "path" not in m or not m.get("category"):
+                continue
+            host = os.path.join(_MODEL_ROOT, m["category"], os.path.basename(m["path"]))
+            if os.path.isfile(host):
+                m["path"] = host
+        self._discover_models()
+        return sorted({m["id"] for m in AVAILABLE_MODELS} - before)
 
         # Seed the reaper pin set with the startup model so the background
         # reaper never evicts the initially-loaded model before the first
@@ -4439,9 +4506,28 @@ def create_app(showcase: ModelShowcase) -> Flask:
 
     @app.route("/api/models", methods=["GET"])
     def get_models():
+        # Live-filter AVAILABLE_MODELS (computed at startup) so a model file
+        # removed at runtime can't be listed as both available and missing.
+        models = [m for m in AVAILABLE_MODELS if _entry_available(m)]
+        return jsonify({
+            "models": models,
+            "missing": _missing_models(),
+            "current": showcase.current_model,
+        })
+
+    @app.route("/api/models/refresh", methods=["POST"])
+    def refresh_models():
+        """Re-scan the host model store after the operator provisions a file.
+
+        Returns the updated models/missing lists plus the ids that just
+        became available, so the UI can confirm the placement worked.
+        """
+        added = showcase.refresh_model_paths()
         return jsonify({
             "models": AVAILABLE_MODELS,
+            "missing": _missing_models(),
             "current": showcase.current_model,
+            "added": added,
         })
 
     @app.route("/api/model", methods=["POST"])

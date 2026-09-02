@@ -15,6 +15,8 @@
   </div>
 </header>
 
+<div class="chat-file-warn" id="file-warn" style="display:none"></div>
+
 <div style="position:relative;flex:1;display:flex;flex-direction:column;min-height:0">
   <!-- GenAI model loading overlay -->
   <div class="genai-loading-overlay" id="genai-loading">
@@ -118,6 +120,20 @@ async function loadModels() {
   if (genaiModels.length === 0) {
     var emptyDesc = document.querySelector('.chat-empty-desc');
     if (emptyDesc) emptyDesc.textContent = 'No GenAI models are currently available on this device. Install a compatible model to start chatting.';
+  }
+  // Early warning when the selected VLM's weight file is missing on this
+  // device — chat would otherwise only fail at the first message.
+  var warnEl = document.getElementById('file-warn');
+  var params = new URLSearchParams(window.location.search);
+  var target = genaiModels.find(function(m) { return m.id === params.get('model'); }) || genaiModels[0];
+  if (warnEl && target && target.warning && target.acquisition && target.acquisition.target) {
+    warnEl.innerHTML =
+      '<strong>' + esc(target.name) + ': weight file missing on this device.</strong> ' +
+      'Provision it first (from the factory image or another device) at ' +
+      '<code>' + esc(target.acquisition.target) + '</code>, then reload this page.';
+    warnEl.style.display = 'flex';
+  } else if (warnEl) {
+    warnEl.style.display = 'none';
   }
 }
 

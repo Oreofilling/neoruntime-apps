@@ -1008,6 +1008,9 @@
       var icon = TYPE_ICONS[m.type] || TYPE_ICONS.detection;
       var badges = badgeHtml(m.type);
       if (isPipeline(m.type)) badges += ' <span class="badge badge-pipe">2-Stage</span>';
+      if (m.warning) {
+        badges += ' <span class="badge badge-file-warn" title="' + esc(m.warning) + '">File missing</span>';
+      }
 
       // NPU benchmark FPS badge
       var benchHtml = '';
@@ -1036,6 +1039,136 @@
         }
         showDemo(m.id);
       });
+
+      modelGrid.appendChild(entry);
+    });
+  }
+
+  // ── Missing (not installed) models ──
+
+  var COPY_SVG = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+  var RESCAN_SVG = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>';
+
+  function copyToClipboard(text, okMsg) {
+    var fail = function() { showToast('Copy failed', 'error'); };
+    var done = function() { showToast(okMsg || 'Copied', 'success'); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, fail);
+      return;
+    }
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand('copy') ? done() : fail();
+    } catch (e) { fail(); }
+    document.body.removeChild(ta);
+  }
+
+  function humanSize(bytes) {
+    if (!bytes || bytes <= 0) return '';
+    var units = ['B', 'KB', 'MB', 'GB'];
+    var i = 0, v = bytes;
+    while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+    return (v >= 10 ? v.toFixed(0) : v.toFixed(1)) + ' ' + units[i];
+  }
+
+  function acquisitionCmd(acq) {
+    if (acq.url) {
+      return 'curl -fLo ' + acq.target + ' \\\n  ' + acq.url;
+    }
+    var file = acq.target.split('/').pop();
+    var dir = acq.target.slice(0, acq.target.lastIndexOf('/'));
+    return 'scp ' + file + ' root@<device-ip>:' + dir + '/';
+  }
+
+  function renderMissingGrid(missing) {
+    missing.forEach(function(m, i) {
+      var acq = m.acquisition || {};
+      var entry = document.createElement('div');
+      entry.className = 'model-entry model-entry-missing anim-card-enter';
+      entry.style.animationDelay = ((modelsData.length + i) * 50) + 'ms';
+      entry.setAttribute('data-model', m.id);
+
+      var icon = TYPE_ICONS[m.type] || TYPE_ICONS.detection;
+      var badges = badgeHtml(m.type) + ' <span class="badge badge-missing">Not installed</span>';
+
+      var cmds = [];  // parallel to the .missing-copy buttons below
+      var hint = '';
+      if (acq.target) {
+        var cmd = acquisitionCmd(acq);
+        cmds.push(cmd);
+        var shaRow = '';
+        if (acq.sha256) {
+          var verifyCmd = 'sha256sum ' + acq.target;
+          cmds.push(verifyCmd);
+          shaRow =
+            '<div class="missing-cmd-row">' +
+              '<code>' + esc(verifyCmd) + '</code>' +
+              '<button class="missing-copy" title="Copy verify command">' + COPY_SVG + '</button>' +
+            '</div>' +
+            '<div class="missing-sha">expect <code>' + esc(acq.sha256.slice(0, 16)) + '&hellip;</code></div>';
+        }
+        var sizePart = humanSize(acq.size_bytes) ? ' &middot; ' + esc(humanSize(acq.size_bytes)) : '';
+        var sourceNote = acq.url
+          ? 'Run on the device shell:'
+          : 'Copy from the factory image or another device, then run on the device:';
+        hint =
+          '<div class="missing-hint">' +
+            '<div class="missing-hint-title">Get this model' + sizePart + '</div>' +
+            '<div class="missing-hint-note">' + esc(sourceNote) + '</div>' +
+            '<div class="missing-cmd-row">' +
+              '<code>' + esc(cmd) + '</code>' +
+              '<button class="missing-copy" title="Copy command">' + COPY_SVG + '</button>' +
+            '</div>' + shaRow +
+            '<button class="missing-refresh">' + RESCAN_SVG + 'I&rsquo;ve placed the file &mdash; rescan</button>' +
+          '</div>';
+      }
+
+      entry.innerHTML =
+        '<div class="model-entry-icon">' + icon + '</div>' +
+        '<div class="model-entry-name">' + esc(m.name) + '</div>' +
+        '<div class="model-entry-desc">' + esc(m.description || '') + '</div>' +
+        '<div class="model-entry-badges">' + badges + '</div>' +
+        hint;
+
+      // Instruction-only card: no click-to-demo.
+
+      var copyBtns = entry.querySelectorAll('.missing-copy');
+      Array.prototype.forEach.call(copyBtns, function(btn, idx) {
+        btn.addEventListener('click', function(ev) {
+          ev.stopPropagation();
+          copyToClipboard(cmds[idx], 'Command copied');
+        });
+      });
+
+      var refreshBtn = entry.querySelector('.missing-refresh');
+      if (refreshBtn) {
+        refreshBtn.addEventListener('click', function(ev) {
+          ev.stopPropagation();
+          refreshBtn.disabled = true;
+          fetch('/api/models/refresh', { method: 'POST' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+              if ((data.added || []).length > 0) {
+                showToast('Detected: ' + data.added.join(', '), 'success');
+              } else {
+                showToast('File not found yet — check the path', 'error');
+                refreshBtn.disabled = false;
+              }
+            })
+            .catch(function() {
+              showToast('Rescan failed', 'error');
+              refreshBtn.disabled = false;
+            });
+          // loadModels() re-renders on success via the added toast flow;
+          // always resync the grid after the request settles.
+          setTimeout(loadModels, 600);
+        });
+      }
 
       modelGrid.appendChild(entry);
     });
@@ -1115,6 +1248,7 @@
       .then(function(data) {
         modelsData = data.models || [];
         renderModelGrid(modelsData);
+        renderMissingGrid(data.missing || []);
         renderSwitcherDropdown(modelsData);
       })
       .catch(function() { showToast('Failed to load models', 'error'); });
