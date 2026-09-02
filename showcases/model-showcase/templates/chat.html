@@ -112,7 +112,7 @@ function addMsg(role, text, image) {
 }
 
 async function loadModels() {
-  var resp = await fetch('/api/models');
+  var resp = await fetch(appUrl('/api/models'));
   var data = await resp.json();
   var genaiModels = data.models.filter(function(m) { return m.type === 'genai'; });
   modelSelect.innerHTML = '<option value="">-- Select Model --</option>' +
@@ -176,7 +176,7 @@ async function createSession(modelId) {
   }, 3000);
 
   try {
-    var resp = await fetch('/api/genai/session', {
+    var resp = await fetch(appUrl('/api/genai/session'), {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({model_id: modelId}),
@@ -236,7 +236,7 @@ async function sendMessage() {
   var fullText = '';
 
   try {
-    var resp = await fetch('/api/genai/stream', {
+    var resp = await fetch(appUrl('/api/genai/stream'), {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({

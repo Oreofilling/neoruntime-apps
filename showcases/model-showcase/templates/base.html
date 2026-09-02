@@ -13,6 +13,16 @@
 <link rel="stylesheet" href="/static/css/components.css">
 <link rel="stylesheet" href="/static/css/layout.css">
 {% block styles %}{% endblock %}
+<script>
+// The console reverse-proxies this app under /apps/<id>/, while direct access
+// serves it from /. The proxy rewrites static href/src attributes but cannot
+// rewrite URLs built by JavaScript — every runtime-built URL must go through
+// appUrl() so it keeps the /apps/<id> prefix when present.
+(function () {
+  var m = window.location.pathname.match(/^(\/apps\/[^/]+)/);
+  window.appUrl = function (p) { return (m ? m[1] : '') + p; };
+})();
+</script>
 </head>
 <body>
 {% block body %}{% endblock %}
