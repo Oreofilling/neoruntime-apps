@@ -1,7 +1,0 @@
-dist/
-*.tar
-*.tar.gz
-__pycache__/
-*.pyc
-.git/
-README.md

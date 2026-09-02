@@ -1,11 +1,11 @@
 # Person Detection Application Container
-# For ARM64 (Hailo platform) with AIPC SDK
+# For ARM64 (Hailo platform) with NeoRuntime SDK
 
 FROM python:3.11-slim-bookworm
 
 LABEL maintainer="opensource@camthink.ai"
 LABEL version="1.0.0"
-LABEL description="Person Detection Application with AIPC SDK"
+LABEL description="Person Detection Application with NeoRuntime SDK"
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -21,15 +21,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Create app directory
 WORKDIR /app
 
-# Copy SDK and install
-COPY hailo_ipc_sdk/ /app/hailo_ipc_sdk/
-COPY setup.py README.md /app/
-RUN pip install --no-cache-dir -e .
+# SDK from PyPI, pinned via --build-arg SDK_VERSION by build_app.sh; the
+# default only matters for a bare `docker build` without the helper; the
+# pinned source is sdk.lock at the repo root (NEORUNTIME_SDK_VERSION overrides).
+ARG SDK_VERSION=0.7.0
+RUN pip install --no-cache-dir "neoruntime-ipc-sdk==${SDK_VERSION}"
 
 # Copy application files
 COPY app.py /app/app.py
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Bundled models (fetched by scripts/fetch_models.sh into models/, sha256-pinned)
+COPY models/ /opt/aipc/models/
 
 # Create non-root user
 RUN useradd -m -u 1000 appuser && \
@@ -46,7 +50,7 @@ ENV LOG_LEVEL=INFO
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python3 -c "from hailo_ipc_sdk import InferenceClient; c = InferenceClient(); c.close()" || exit 1
+    CMD python3 -c "from neoruntime_ipc_sdk import InferenceClient; c = InferenceClient(); c.close()" || exit 1
 
 # Switch to non-root user
 USER appuser

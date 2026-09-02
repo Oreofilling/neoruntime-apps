@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ShelfOps — Shelf Slot Recognition</title>
+  <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="%2310141b"/><text x="16" y="23" font-family="monospace" font-size="18" font-weight="800" fill="%234ec94c" text-anchor="middle">S</text></svg>'>
+  <link rel="stylesheet" href="static/css/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">S</span>
+      <div class="brand-text">
+        <h1>Shelf<em>Ops</em></h1>
+        <p>Shelf slot recognition · CLIP A–E + empty slots · sales heatmap</p>
+      </div>
+    </div>
+    <div class="topbar-stats" id="topbar-stats">
+      <span class="stat" id="stat-status"><b>…</b><i>Status</i></span>
+      <span class="stat"><b id="stat-fps">-</b><i>Video fps</i></span>
+      <span class="stat"><b id="stat-frame">-</b><i>Frame</i></span>
+      <span class="stat"><b id="stat-slots">-</b><i>Slots</i></span>
+      <span class="stat"><b id="stat-goods">-</b><i>Goods</i></span>
+    </div>
+    <nav class="topbar-nav" aria-label="Project links">
+      <a href="https://github.com/camthink-ai/neoruntime-apps" target="_blank" rel="noopener">Repo</a>
+      <a href="https://github.com/camthink-ai/neoruntime-apps/tree/main/showcases/shelf-ops" target="_blank" rel="noopener">Source</a>
+      <a href="https://github.com/camthink-ai/neoruntime-apps/releases" target="_blank" rel="noopener">Releases</a>
+    </nav>
+    <div class="topbar-actions">
+      <span class="model-tag" id="model-tag">model</span>
+      <button type="button" class="demo-btn" id="btn-demo" hidden
+              title="Loop the built-in demo video through the live pipeline"
+              >Demo video</button>
+      <button type="button" class="import-btn" id="btn-import">Import media</button>
+      <input type="file" id="import-file" accept="image/jpeg,image/png,image/webp,image/bmp,video/mp4,video/quicktime,.mp4,.mov,.m4v" hidden>
+    </div>
+  </header>
+
+  <main class="shell">
+    <!-- left: live preview (HD = hardware H.264 + MSE, Smooth = server MJPEG) -->
+    <section class="preview-panel">
+      <div class="preview-wrap" id="preview-wrap">
+        <img id="preview" alt="shelf preview">
+        <video id="hd-video" autoplay muted playsinline style="display:none"></video>
+        <canvas id="overlay-canvas" width="16" height="9" style="display:none"></canvas>
+        <div class="preview-hud" id="preview-hud"></div>
+        <div class="preview-modes" id="preview-modes" style="display:none">
+          <button type="button" id="btn-hd">HD</button>
+          <button type="button" id="btn-smooth">Smooth</button>
+        </div>
+        <div class="preview-note" id="preview-note"></div>
+        <div class="toasts" id="toasts" aria-live="polite"></div>
+      </div>
+      <div class="legends" id="legends"></div>
+    </section>
+
+    <!-- right: planogram register -->
+    <section class="rack-panel">
+      <div class="panel-head">
+        <h2>Shelf Inventory</h2>
+        <span class="panel-note" id="rack-note">live goods per area</span>
+        <button type="button" class="grid-toggle" id="btn-gridmap" hidden>Show grid map</button>
+      </div>
+      <div class="rack" id="rack"><p class="empty">Waiting for first scan…</p></div>
+    </section>
+
+    <!-- bottom: analytics -->
+    <section class="analytics-panel">
+      <div class="panel-head">
+        <h2>Sales Heatmap</h2>
+        <span class="panel-note" id="heat-note">peak stock per slot × time bucket</span>
+        <div class="seg" id="heat-span">
+          <button data-span="1h">1h</button>
+          <button data-span="6h" class="active">6h</button>
+          <button data-span="1d">1d</button>
+          <button data-span="7d">7d</button>
+        </div>
+      </div>
+      <div class="heat-wrap">
+        <div class="heat-legend" id="heat-legend"></div>
+        <div class="heat-grid" id="heat-grid"><p class="empty">Waiting for data…</p></div>
+        <p class="heat-tip">Each tile is one shelf slot in one time bucket —
+          color = dominant goods code (see legend), stronger fill = closer to
+          capacity, number = peak item count. Hover a tile for details.</p>
+      </div>
+    </section>
+
+    <!-- events -->
+    <section class="events-panel">
+      <div class="panel-head">
+        <h2>Stock-out / Restock Events</h2>
+        <span class="panel-note">live SSE</span>
+      </div>
+      <ul class="events" id="events"><li class="empty">No events yet</li></ul>
+    </section>
+  </main>
+
+  <!-- offline photo analysis (Import button): upload runs the same counting
+       chains on one image; live monitoring is not affected -->
+  <div class="import-backdrop" id="import-modal" hidden>
+    <div class="import-modal" role="dialog" aria-modal="true" aria-label="Analyze a shelf photo">
+      <div class="import-head">
+        <h2>Media analysis</h2>
+        <button type="button" class="import-close" id="import-close" aria-label="Close">&#10005;</button>
+      </div>
+      <div class="import-body" id="import-body">
+        <div class="import-drop" id="import-drop">
+          <p class="import-title"><b>Drop a shelf photo or video</b> or click to choose</p>
+          <p class="import-hint">Runs the same item-counting chains offline — the live view keeps running.
+            Photos: JPEG / PNG / WebP / BMP, up to 15&nbsp;MB · Videos: MP4 / MOV, up to 200&nbsp;MB
+            (evenly sampled, annotated keyframes returned).</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="static/js/app.js"></script>
+</body>
+</html>

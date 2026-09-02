@@ -1,0 +1,164 @@
+# NeoRuntime Platform Application Manifest
+# ShelfOps - Slot-anchored CLIP shelf recognition: per-slot product/empty
+# classification, stockout/restock state machine, and time-bucket heatmap
+
+apiVersion: v1
+kind: Application
+
+metadata:
+  id: shelf-ops
+  name: ShelfOps Shelf Slot Recognition
+  version: 0.3.0
+  description: Slot-anchored CLIP recognition (product/empty per slot) or full-frame grid counting (slot_mode), stockout-restock state machine, and time-bucket heatmap analytics
+  author: NeoRuntime Team
+
+spec:
+  image: neoruntime/shelf-ops:0.3.0
+
+  resources:
+    cpu: "300%"
+    memory: "1Gi"
+
+  # Read-only access to host model files for the CLIP ViT-B/32 encoder.
+  # app-manager sandbox rewrites this volume host to RootPath()/models on device.
+  # clip/clip_vit_b_32_image_encoder_nv12.hef must be provisioned under
+  # /data/aipc/models/ (see docs/device-gate.md).
+  volumes:
+    - host: /data/aipc/models
+      container: /data/aipc/models
+      readonly: true
+    - host: /data/aipc/models
+      container: /opt/aipc/models
+      readonly: true
+    # Persistent config + analytics sqlite: config.yaml, vocab_embeddings_f32.npy
+    - host: /data/aipc/etc/shelf-ops
+      container: /data/aipc/etc/shelf-ops
+
+  # Bundled model dependencies (image /opt/aipc/bundled-models). Only the
+  # CLIP encoder is declared here: its raw-embedding output needs no
+  # postprocess, so a fresh-device transient registration (empty variant) is
+  # safe and the app treats "already registered" as benign. yolo_world_540
+  # stays OUT of spec.models — it needs the app's runtime registration
+  # (identity variant + declared dual inputs + app-side decode); an
+  # empty-variant transient registration would apply the default yolov8
+  # backend and break inference with no self-heal path.
+  models:
+    clip:
+      id: clip_vit_b_32
+      path: /opt/aipc/bundled-models/clip_vit_b_32_image_encoder_nv12.hef
+      type: embedding
+      required: true
+
+  permissions:
+    video:
+      - main.raw
+      - sub.raw
+
+    inference:
+      max_qps: 30
+      max_concurrent: 2
+      allow_register_model: true
+
+    events:
+      publish:
+        - shelf/stockout
+        - shelf/restock
+        - shelf/occupancy
+        - shelf/health
+
+    # host network so the browser can reach the web console on the device LAN IP
+    network:
+      mode: host
+      inbound:
+        - 8891
+
+  env:
+    - name: WEB_PORT
+      value: "8891"
+    - name: STREAM_ID
+      value: "main"
+    - name: INFER_FPS
+      value: "2.0"
+    - name: PREVIEW_FPS
+      value: "15"
+    - name: PREVIEW_WIDTH
+      value: "1280"
+    # HD preview: platform-api hardware H.264 -> browser MSE (/api/preview
+    # builds the wss URL). AIPC_TOKEN_KEY is injected at runtime; when the
+    # manager leaves the ${...} literal unexpanded the app detects it and the
+    # UI falls back to the MJPEG /stream above.
+    - name: PLATFORM_API_WS_SCHEME
+      value: "wss"
+    - name: PLATFORM_API_PORT
+      value: "443"
+    - name: PLATFORM_API_TOKEN
+      value: "${AIPC_TOKEN_KEY}"
+    # Slot-anchored CLIP recognition: register the CLIP ViT-B/32 encoder and
+    # classify each configured slot polygon's crop against the vocabulary
+    # text embeddings (~10 crops x 48ms = ~0.5s per scan at INFER_FPS).
+    - name: CLIP_MODEL
+      value: "clip_vit_b_32"
+    - name: MODEL_ROOT
+      value: "/data/aipc/models"
+    - name: CLIP_TIMEOUT_MS
+      value: "3000"
+    - name: CLIP_REGISTER_RETRIES
+      value: "3"
+    # Cosine gate: below CLIP_MIN_COS a tick holds the slot's last observation
+    # (uncertain crop) instead of flipping occupancy.
+    - name: CLIP_MIN_COS
+      value: "0.15"
+    # Slot crops are padded by this fraction of the polygon bbox for context.
+    - name: SLOT_CROP_PAD
+      value: "0.05"
+    - name: CONFIG_PATH
+      value: "/data/aipc/etc/shelf-ops/config.yaml"
+    - name: LOG_LEVEL
+      value: "INFO"
+    # Vocabulary text embeddings: "device" = build via EncodeText at first
+    # boot (cached); "file" = load the cached float32 matrix + JSON sidecar
+    # from EMBEDDING_PATH (offline provisioning via tools/generate_embeddings.py).
+    - name: EMBEDDING_MODE
+      value: "device"
+    - name: EMBEDDING_PATH
+      value: "/data/aipc/etc/shelf-ops/vocab_embeddings_f32.npy"
+    - name: ENCODE_TEMPLATE
+      value: "a photo of {}"
+    # Per-item goods detection (yolo_world v5.4.0): live scan stays
+    # full-frame at threshold 0.25; one-shot photo imports use the accurate
+    # path — 2x2 tiled inference (~2x linear resolution for small goods,
+    # 4 infers/shot) at the probe53-pinned threshold 0.15 with a 200 cap.
+    - name: DETECT_TILES
+      value: "1"
+    - name: DETECT_MAX_ITEMS
+      value: "64"
+    - name: IMPORT_DETECT_TILES
+      value: "4"
+    - name: IMPORT_DETECT_THRESHOLD
+      value: "0.15"
+    - name: IMPORT_DETECT_MAX_ITEMS
+      value: "200"
+    # Analytics (time-bucket heatmap, sqlite)
+    - name: ANALYTICS_DB
+      value: "/data/aipc/etc/shelf-ops/analytics.db"
+    - name: BUCKET_SECONDS
+      value: "600"
+    - name: RETENTION_HOURS
+      value: "336"
+    # Alerts / occupancy state machine
+    - name: ALERT_COOLDOWN_SECONDS
+      value: "30"
+    - name: STOCKOUT_SECONDS
+      value: "120"
+    - name: RESTOCK_COOLDOWN_SECONDS
+      value: "60"
+
+  autostart: false
+  restart_policy: on-failure
+  restart_max_retries: 3
+
+  healthcheck:
+    enabled: true
+    interval: 30s
+    timeout: 5s
+    retries: 3

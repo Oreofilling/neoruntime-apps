@@ -1,0 +1,13 @@
+# Models fetched by scripts/fetch_models.sh (zoo compile pinned by sha256).
+# Vendored device artifacts in this directory (no rows here, kept via the
+# .gitignore negation):
+#   - yolo_world_v2s_540.hef — custom dual-input compile
+#     (yolo_world_v2s/input_layer1 640x640x3 uint8 + input_layer2 80x512
+#     uint16); no zoo equivalent.
+# Zoo pinning rationale: v5.3.0/hailo15h matches the device firmware
+# (HailoRT 5.3.0). The zoo clip compile is interface-identical to the device
+# copy (input clip_vit_b_32_image_encoder/input_layer1 NV12 112x224x3, output
+# conv50 NHWC 1x1x512 — verified with hailortcli parse-hef), and vocabulary
+# embeddings are always self-generated with the active encoder, so a fresh
+# device can boot from the zoo artifact and re-index on startup.
+ecbf4a201272548c8d5a33a30ab138c7a95bad68e15f7196aa4c2458fa7d02d6	clip_vit_b_32_image_encoder_nv12.hef	https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/v5.3.0/hailo15h/clip_vit_b_32_image_encoder_nv12.hef

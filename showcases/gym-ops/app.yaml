@@ -1,4 +1,4 @@
-# AIPC Platform Application Manifest
+# NeoRuntime Platform Application Manifest
 # GymOps Pose Coach - Real-time gym pose analysis, counting, zone occupancy, safety alerts
 
 apiVersion: v1
@@ -9,10 +9,10 @@ metadata:
   name: GymOps Pose Coach
   version: 0.1.0
   description: Real-time gym pose coaching with squat/pushup counting, zone occupancy, and safety alerts
-  author: AIPC Team
+  author: NeoRuntime Team
 
 spec:
-  image: aipc/gym-ops:0.1.0
+  image: neoruntime/gym-ops:0.1.0
 
   resources:
     cpu: "300%"
@@ -51,6 +51,7 @@ spec:
         - gym/alerts
         - gym/health
         - gym/identity
+        - gym/trajectory
 
     # host network so the browser can reach the web console + platform-api
     # H.264 MSE endpoint on the device's LAN IP (mirrors model-showcase).
@@ -130,6 +131,27 @@ spec:
       value: "true"
     - name: GATE_UNLOCK_SECONDS
       value: "5"
+    # Trajectory: zone-visit sessions + JSONL persistence
+    - name: ENABLE_TRAJECTORY
+      value: "true"
+    - name: TRAJECTORY_MIN_VISIT_SECONDS
+      value: "3"
+    - name: TRAJECTORY_REJOIN_SECONDS
+      value: "30"
+    - name: TRAJECTORY_SESSION_CLOSE_SECONDS
+      value: "10"
+    - name: TRAJECTORY_TRAIL_POINTS
+      value: "60"
+    - name: TRAJECTORY_PERSIST
+      value: "true"
+    - name: TRAJECTORY_LINK_MEMBER_IDENTITY
+      value: "false"
+    - name: TRAJECTORY_RETENTION_DAYS
+      value: "30"
+    - name: TRAJECTORY_DIR
+      value: "/data/aipc/etc/gym-ops/trajectory"
+    - name: TRAJECTORY_REBIND_COUNTER
+      value: "true"
 
   autostart: false
   restart_policy: on-failure

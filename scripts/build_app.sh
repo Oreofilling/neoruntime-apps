@@ -1,19 +1,17 @@
 #!/bin/bash
-# Unified app build script for AIPC platform
+# Unified app build script for NeoRuntime platform
 # Usage: ./scripts/build_app.sh <app-dir> [--arch arm64|amd64] [--output ./dist]
 #
-# Automates: copy SDK → docker build → save image → package .aipc → cleanup
+# Automates: SDK install → docker build → save image → package .neoapp → cleanup
 #
-# SDK source defaults to the sibling neoruntime-sdks repo; override with AIPC_SDK_SRC.
-#
-#   AIPC_SDK_SRC=/path/to/neoruntime-sdks/python ./scripts/build_app.sh <app-dir>
+# The SDK is installed from PyPI: neoruntime-ipc-sdk==$SDK_VERSION, where the
+# version resolves via scripts/resolve_sdk_version.sh — sdk.lock by default,
+# NEORUNTIME_SDK_VERSION to override (or =latest to float).
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-SDK_SRC="${AIPC_SDK_SRC:-$(dirname "$PROJECT_ROOT")/neoruntime-sdks/python/hailo_ipc_sdk}"
-SDK_PYTHON_DIR="$(dirname "$SDK_SRC")"
 
 # Defaults
 ARCH="arm64"
@@ -25,7 +23,7 @@ usage() {
     echo ""
     echo "  app-directory   Path to app directory containing Dockerfile and app.yaml"
     echo "  --arch          Target architecture (default: arm64)"
-    echo "  --output        Output directory for .aipc package (default: app directory)"
+    echo "  --output        Output directory for .neoapp package (default: app directory)"
     exit 1
 }
 
@@ -49,6 +47,9 @@ fi
 APP_DIR="$(cd "$APP_DIR" && pwd)"
 APP_NAME="$(basename "$APP_DIR")"
 
+# SDK version: sdk.lock by default; NEORUNTIME_SDK_VERSION to override.
+SDK_VERSION="$("$SCRIPT_DIR/resolve_sdk_version.sh")"
+
 APP_YAML="$APP_DIR/app.yaml"
 if [ ! -f "$APP_YAML" ]; then
     echo "Error: app.yaml not found in $APP_DIR"
@@ -59,7 +60,7 @@ VERSION=$(grep -m1 '^\s*version:' "$APP_YAML" | awk '{print $2}' | tr -d '"')
 VERSION="${VERSION:-1.0.0}"
 
 IMAGE_TAG=$(grep -m1 '^\s*image:' "$APP_YAML" | awk '{print $2}' | tr -d '"')
-IMAGE_TAG="${IMAGE_TAG:-aipc/${APP_NAME}:${VERSION}}"
+IMAGE_TAG="${IMAGE_TAG:-neoruntime/${APP_NAME}:${VERSION}}"
 
 OUTPUT_DIR="${OUTPUT_DIR:-$APP_DIR}"
 mkdir -p "$OUTPUT_DIR"
@@ -67,26 +68,22 @@ mkdir -p "$OUTPUT_DIR"
 echo "============================================"
 echo "  Building ${APP_NAME}:${VERSION} for ${ARCH}"
 echo "  Image: ${IMAGE_TAG}"
+echo "  SDK: neoruntime-ipc-sdk ${SDK_VERSION} ($(if [ -n "${NEORUNTIME_SDK_VERSION:-}" ]; then echo NEORUNTIME_SDK_VERSION; else echo sdk.lock; fi))"
 echo "============================================"
 
-# Stage SDK
-echo "Staging SDK..."
-SDK_STAGED=false
-if [ -d "$SDK_SRC" ]; then
-    cp -r "$SDK_SRC" "$APP_DIR/"
-    cp "$SDK_PYTHON_DIR/setup.py" "$APP_DIR/"
-    cp "$SDK_PYTHON_DIR/README.md" "$APP_DIR/"
-    SDK_STAGED=true
-else
-    echo "Warning: SDK source not found ($SDK_SRC), skipping staging"
+# Stage models (zoo fetch, sha256-pinned via models.manifest; no-op otherwise)
+if [ -f "$APP_DIR/models.manifest" ]; then
+    echo "Staging models..."
+    "$SCRIPT_DIR/fetch_models.sh" "$APP_DIR"
 fi
 
 # Build
 echo "Building Docker image..."
 if [ "$ARCH" = "arm64" ]; then
-    docker buildx build --platform linux/arm64 --load -t "$IMAGE_TAG" "$APP_DIR"
+    docker buildx build --platform linux/arm64 --load \
+        --build-arg SDK_VERSION="$SDK_VERSION" -t "$IMAGE_TAG" "$APP_DIR"
 else
-    docker build -t "$IMAGE_TAG" "$APP_DIR"
+    docker build --build-arg SDK_VERSION="$SDK_VERSION" -t "$IMAGE_TAG" "$APP_DIR"
 fi
 
 # Export
@@ -94,24 +91,28 @@ echo "Exporting image..."
 IMAGE_TAR="$APP_DIR/image.tar"
 docker save "$IMAGE_TAG" -o "$IMAGE_TAR"
 
-# Package
-echo "Creating .aipc package..."
-AIPC_PACKAGE="$OUTPUT_DIR/${APP_NAME}.aipc"
-rm -f "$AIPC_PACKAGE"
-(cd "$APP_DIR" && zip -r "$AIPC_PACKAGE" app.yaml image.tar)
-
-# Cleanup
-rm -f "$IMAGE_TAR"
-if [ "$SDK_STAGED" = true ]; then
-    rm -rf "$APP_DIR/hailo_ipc_sdk" "$APP_DIR/setup.py" "$APP_DIR/README.md"
-fi
+# Package (.neoapp = tar.gz bundle with the same layout as showcase bundles:
+# <app>-<version>-<arch>/{app.yaml, image.tar, SHA256SUMS} — one package
+# format for web import and CLI install).
+echo "Creating .neoapp package..."
+PACKAGE_DIR="${APP_NAME}-${VERSION}-${ARCH}"
+NRT_PACKAGE="$OUTPUT_DIR/${PACKAGE_DIR}.neoapp"
+STAGING_ROOT="$OUTPUT_DIR/.tmp-nrt-staging"
+STAGING="$STAGING_ROOT/$PACKAGE_DIR"
+rm -rf "$STAGING_ROOT"
+mkdir -p "$STAGING"
+cp "$APP_YAML" "$STAGING/app.yaml"
+mv "$IMAGE_TAR" "$STAGING/image.tar"
+(cd "$STAGING" && sha256sum * > SHA256SUMS)
+tar -C "$STAGING_ROOT" -czf "$NRT_PACKAGE" "$PACKAGE_DIR"
+rm -rf "$STAGING_ROOT"
 
 echo ""
 echo "============================================"
 echo "  Build complete!"
-echo "  Package: $AIPC_PACKAGE"
-echo "  Size: $(du -h "$AIPC_PACKAGE" | cut -f1)"
+echo "  Package: $NRT_PACKAGE"
+echo "  Size: $(du -h "$NRT_PACKAGE" | cut -f1)"
 echo "============================================"
 echo ""
 echo "To install on device:"
-echo "  aipc-cli app install <app-id> app.yaml image.tar"
+echo "  tar xzf ${PACKAGE_DIR}.neoapp && aipc-cli app install <app-id> ${PACKAGE_DIR}/app.yaml ${PACKAGE_DIR}/image.tar"

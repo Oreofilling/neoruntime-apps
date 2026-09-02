@@ -1,5 +1,5 @@
 # Hello World Application Manifest
-# Minimal example for testing the AIPC platform
+# Minimal example for testing the NeoRuntime platform
 
 apiVersion: v1
 kind: Application
@@ -9,11 +9,11 @@ metadata:
   name: Hello World
   version: 1.0.0
   description: A simple hello world application that prints continuously
-  author: AIPC Team
+  author: NeoRuntime Team
 
 spec:
   # Container image
-  image: aipc/hello-world:1.0.0
+  image: neoruntime/hello-world:1.0.0
 
   # Minimal resource limits
   resources:

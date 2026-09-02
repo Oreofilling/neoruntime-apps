@@ -25,14 +25,17 @@ import numpy as np
 from flask import Flask, Response, jsonify, render_template, request
 from flask_sock import Sock
 
-from hailo_ipc_sdk.app import AppClient
-from hailo_ipc_sdk.config import Config
-from hailo_ipc_sdk.events import EventClient
-from hailo_ipc_sdk.inference import BatchInferItem, InferenceClient
-from hailo_ipc_sdk.media import FdMediaClient
+from neoruntime_ipc_sdk.app import AppClient
+from neoruntime_ipc_sdk.config import Config
+from neoruntime_ipc_sdk.events import EventClient
+from neoruntime_ipc_sdk.inference import BatchInferItem, InferenceClient
+from neoruntime_ipc_sdk.media import FdMediaClient
 
 import overlay
-from alerts import AlertManager, TOPIC_OCCUPANCY, TOPIC_POSE, TOPIC_IDENTITY
+from alerts import (
+    AlertManager, TOPIC_OCCUPANCY, TOPIC_POSE, TOPIC_IDENTITY,
+    TOPIC_TRAJECTORY,
+)
 from config import (
     DEGRADED_FAILURE_THRESHOLD, INFER_TIMEOUT_MS, INFER_WARMUP_COUNT,
     INFER_WARMUP_TIMEOUT_MS, load_config,
@@ -48,6 +51,7 @@ from pose import KeyPoints, Pt, body_center, parse_keypoints, point_in_polygon
 from tracker import BodyTracker
 from video_source import VideoFrameSource
 from zones import ZoneManager
+from trajectory import TrajectoryStore, TrajectoryTracker
 
 # how long an idle person's counter persists before eviction
 _TRACKER_TTL_SECONDS = 30
@@ -86,9 +90,7 @@ class GymApp:
             self.cfg.long_occupation_seconds,
         )
         # zones flagged forbidden in config (zone dict: forbidden: true)
-        self.forbidden_zones = {
-            str(z.get("id", "")) for z in self.cfg.zones if z.get("forbidden")
-        }
+        self.forbidden_zones = {z.id for z in self.zones.zones if z.forbidden}
         self.alerts = AlertManager(
             self.events, self.cfg.alert_cooldown_seconds,
             self.cfg.fall_candidate_seconds, self.cfg.long_static_seconds,
@@ -100,6 +102,27 @@ class GymApp:
 
         # Phase 1+4: equipment utilization tracking
         self.equipment_stats = EquipmentStats()
+
+        # Trajectory: zone-visit sessions (kill-switch via ENABLE_TRAJECTORY)
+        self.trajectory: TrajectoryTracker | None = None
+        self.trajectory_store: TrajectoryStore | None = None
+        if self.cfg.enable_trajectory:
+            if self.cfg.trajectory_persist:
+                self.trajectory_store = TrajectoryStore(
+                    self.cfg.trajectory_dir,
+                    retention_days=self.cfg.trajectory_retention_days,
+                    link_member_identity=self.cfg.trajectory_link_member_identity,
+                )
+                self.trajectory_store.prune()
+            self.trajectory = TrajectoryTracker(
+                zone_names={z.id: z.name for z in self.zones.zones},
+                zone_exercise_map=self.zones.zone_exercise_map,
+                min_visit_seconds=self.cfg.trajectory_min_visit_seconds,
+                rejoin_seconds=self.cfg.trajectory_rejoin_seconds,
+                session_close_seconds=self.cfg.trajectory_session_close_seconds,
+                trail_points=self.cfg.trajectory_trail_points,
+                store=self.trajectory_store,
+            )
 
         # Phase 2: face recognition (optional — disabled if model missing)
         self.face_db: FaceDatabase | None = None
@@ -707,6 +730,20 @@ class GymApp:
                                        member_ids=self._member_ids)
         zone_names = {z.id: z.name for z in self.zones.zones}
 
+        # Trajectory: aggregate zone assignments into visits/sessions.
+        trajectory_events: list[dict] = []
+        if self.trajectory is not None:
+            counter_snaps = {p["id"]: p["snap"] for p in snapshots}
+            trajectory_events = self.trajectory.update(
+                persons, zone_snap.get("assignments", {}),
+                counter_snaps, self._member_ids, now)
+            for ev in trajectory_events:
+                if ev["type"] == "visit_confirmed":
+                    if self.cfg.trajectory_rebind_counter:
+                        self._rebind_counter_on_visit(ev, now)
+                elif ev["type"] == "session_summary":
+                    self._publish_trajectory_summary(ev)
+
         alert_events: list[dict] = []
         for key, kp in persons:
             zid = self._zone_id_of(kp)
@@ -777,6 +814,16 @@ class GymApp:
             "pose_fps": round(pose_fps, 1),
             "detect_persons": len(detect_persons),
             "parallel_infer": self._detect_model_id is not None,
+            "trajectory": {
+                "enabled": self.trajectory is not None,
+                "active": (self.trajectory.active_snapshot(now)
+                           if self.trajectory else []),
+                "trails": (self.trajectory.trails_snapshot()
+                           if self.trajectory else {}),
+                # session summaries closed on this frame (for UI timeline)
+                "events": [e for e in trajectory_events
+                           if e["type"] == "session_summary"],
+            },
         }
         with self._state_lock:
             self._latest = snapshot
@@ -784,6 +831,34 @@ class GymApp:
             self._publish_sync_preview(snapshot, sync_meta)
         self._broadcast_sse(snapshot)
         self._publish_periodic(now, snapshots, zone_snap)
+
+    def _rebind_counter_on_visit(self, ev: dict, now: float) -> None:
+        """On visit_confirmed, rebuild the counter if its exercise no longer
+        matches the zone's equipment. Default ON (TRAJECTORY_REBIND_COUNTER).
+
+        The trajectory module captures its counter baseline lazily on the
+        FIRST frame after confirmation where the snapshot exercise matches,
+        so a same-frame rebuild here does not corrupt rep attribution.
+        """
+        key = ev.get("tracker_id")
+        exercise = ev.get("exercise")
+        if not key or not exercise:
+            return
+        counter = self._counters.get(key)
+        if counter is not None and getattr(counter, "exercise", None) == exercise:
+            return
+        try:
+            self._counters[key] = make_counter(exercise, now)
+            print(f"[trajectory] counter rebound: {key} -> {exercise}")
+        except ValueError:
+            pass  # unknown exercise: keep the existing counter
+
+    def _publish_trajectory_summary(self, payload: dict) -> None:
+        """Push a closed-session summary to the gym/trajectory bus topic."""
+        try:
+            self.events.publish(TOPIC_TRAJECTORY, payload)
+        except Exception as e:  # noqa: BLE001
+            print(f"[trajectory] WARN: publish failed: {e}")
 
     def _publish_periodic(self, now: float, snapshots: list[dict],
                           zone_snap: dict) -> None:
@@ -826,7 +901,13 @@ class GymApp:
         """Draw zones + skeleton + per-person tags + status bar onto a BGR
         frame, then JPEG-encode it into self._latest_jpeg. Shared by the
         uploaded-video infer path and the live MJPEG preview thread."""
-        overlay.draw_zones(frame, self.zones.zones, set(zone_snap["crowded"]))
+        overlay.draw_zones(frame, self.zones.zones, set(zone_snap["crowded"]),
+                           counts=zone_snap["counts"])
+        # motion trails (video mode renders server-side; live mode draws
+        # them in the browser from snapshot["trajectory"]["trails"])
+        if self.trajectory is not None:
+            for _tid, pts in self.trajectory.trails_snapshot().items():
+                overlay.draw_trail(frame, pts)
         for _key, kp in persons:
             overlay.draw_keypoints(frame, kp)
         y = 24
@@ -991,17 +1072,56 @@ class GymApp:
         self.app.add_url_rule("/api/video/control", "video_control",
                               self._video_control, methods=["POST"])
         self.app.add_url_rule("/api/preview", "preview", self._preview)
+        self.app.add_url_rule("/api/trajectory/active", "trajectory_active",
+                              self._trajectory_active)
+        self.app.add_url_rule("/api/trajectory/sessions", "trajectory_sessions",
+                              self._trajectory_sessions)
+        self.app.add_url_rule("/api/trajectory/sessions/<path:session_id>",
+                              "trajectory_session", self._trajectory_session)
         self.sock.route("/ws/sync-preview")(self._sync_preview_ws)
 
     def _health(self):
         return jsonify({"ok": True, "app": "gym-ops", "model": self._model_id,
                         "video_mode": self._video_mode})
 
+    def _trajectory_active(self):
+        """Live in-gym sessions: current zone, dwell, overlay trails."""
+        if self.trajectory is None:
+            return jsonify({"enabled": False, "active": [], "trails": {}})
+        return jsonify({
+            "enabled": True,
+            "active": self.trajectory.active_snapshot(time.time()),
+            "trails": self.trajectory.trails_snapshot(),
+        })
+
+    def _trajectory_sessions(self):
+        """Persisted session summaries, newest first. ?member_id= filter
+        only returns rows when identity linking was enabled at write time."""
+        if self.trajectory_store is None:
+            return jsonify({"enabled": False, "sessions": []})
+        limit = request.args.get("limit", default=50, type=int)
+        member_id = request.args.get("member_id") or None
+        return jsonify({
+            "enabled": True,
+            "sessions": self.trajectory_store.load_sessions(
+                limit=limit, member_id=member_id),
+        })
+
+    def _trajectory_session(self, session_id: str):
+        """One persisted session summary by id."""
+        if self.trajectory_store is None:
+            return jsonify({"error": "trajectory persistence disabled"}), 404
+        session = self.trajectory_store.get_session(session_id)
+        if session is None:
+            return jsonify({"error": "session not found"}), 404
+        return jsonify(session)
+
     def _config(self):
         """Zone/equipment definitions for the UI (names + capacities + polygons)."""
         return jsonify({
             "zones": [{"id": z.id, "name": z.name, "capacity": z.capacity,
-                       "polygon": z.polygon}
+                       "polygon": z.polygon, "color": z.color,
+                       "forbidden": z.forbidden}
                       for z in self.zones.zones],
             "equipment": [{"id": e.id, "name": e.name, "zone_id": e.zone_id}
                           for e in self.zones.equipment],
@@ -1015,6 +1135,15 @@ class GymApp:
                                ws_port=self.cfg.platform_api_port)
 
     def _stream(self):
+        # Optional ?fps=N throttle (clamped 1..10) for thin remote paths, e.g.
+        # after the frontend auto-degrades HD→MJPEG over a relay tunnel.
+        # Without the param the loop runs at cfg.preview_fps (LAN behavior).
+        try:
+            req_fps = int(request.args.get("fps", 0))
+        except (TypeError, ValueError):
+            req_fps = 0
+        frame_interval = 1.0 / req_fps if 1 <= req_fps <= 10 else 1.0 / max(self.cfg.preview_fps, 5)
+
         def gen():
             boundary = b"--frame\r\n"
             with self._stream_clients_lock:
@@ -1027,7 +1156,7 @@ class GymApp:
                         time.sleep(0.05)
                         continue
                     yield (boundary + b"Content-Type: image/jpeg\r\n\r\n" + jpg + b"\r\n")
-                    time.sleep(1.0 / max(self.cfg.preview_fps, 5))
+                    time.sleep(frame_interval)
             finally:
                 with self._stream_clients_lock:
                     self._stream_clients = max(0, self._stream_clients - 1)

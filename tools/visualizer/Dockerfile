@@ -3,7 +3,7 @@
 
 FROM python:3.10-slim
 
-LABEL maintainer="AIPC Team"
+LABEL maintainer="NeoRuntime Team"
 LABEL description="Inference result visualizer"
 LABEL version="1.0.0"
 
@@ -22,9 +22,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy AIPC SDK
-COPY hailo_ipc_sdk/ /app/hailo_ipc_sdk/
-ENV PYTHONPATH=/app
+# SDK from PyPI (pinned via SDK_VERSION build-arg; default for bare docker build)
+ARG SDK_VERSION=0.5.0
+RUN pip install --no-cache-dir "neoruntime-ipc-sdk==${SDK_VERSION}"
 
 # Copy application
 COPY main.py .

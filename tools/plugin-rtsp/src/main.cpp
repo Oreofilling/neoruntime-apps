@@ -207,7 +207,7 @@ int main(int argc, char** argv) {
     hal_log_set_timestamp(1);
 
     HAL_LOG_INFO("====================================");
-    HAL_LOG_INFO("AIPC RTSP Plugin v1.0.0");
+    HAL_LOG_INFO("NeoRuntime RTSP Plugin v1.0.0");
     HAL_LOG_INFO("====================================");
 
     // Read config from environment

@@ -1,1 +1,1 @@
-"""AIPC Parallel Benchmark - Model Parallel Capability Showcase"""
+"""NeoRuntime Parallel Benchmark - Model Parallel Capability Showcase"""

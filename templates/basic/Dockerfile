@@ -1,17 +1,12 @@
-# AIPC Application Container Template
-# Uses the AIPC Python base image with SDK pre-installed
-#
-# Build the base image first:
-#   ./scripts/build_base_images.sh
-#
-# Then build your app:
-#   FROM aipc/python-base:1.0
+# NeoRuntime Application Container Template
+# Standalone image: the NeoRuntime SDK is installed from PyPI (pinned via the
+# SDK_VERSION build-arg; the default only matters for a bare `docker build`).
 
-FROM aipc/python-base:1.0
+FROM python:3.11-slim-bookworm
 
 LABEL maintainer="you@example.com"
 LABEL version="1.0.0"
-LABEL description="AIPC Application Template"
+LABEL description="NeoRuntime Application Template"
 
 # Install additional system dependencies (if needed)
 # RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -20,12 +15,16 @@ LABEL description="AIPC Application Template"
 
 WORKDIR /app
 
+# NeoRuntime SDK from PyPI
+ARG SDK_VERSION=0.5.0
+RUN pip install --no-cache-dir "neoruntime-ipc-sdk==${SDK_VERSION}"
+
 # Copy application files
 COPY app.py app.yaml /app/
-COPY requirements*.txt /app/
 
-# Install app-specific dependencies
-RUN if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi
+# App-specific dependencies: add requirements.txt and uncomment
+# COPY requirements.txt /app/
+# RUN pip install --no-cache-dir -r requirements.txt
 
 # Create data directories
 RUN mkdir -p /app/logs /app/data
@@ -37,6 +36,6 @@ ENV LOG_LEVEL=INFO
 
 # Health check - validates SDK connectivity
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python3 -c "from hailo_ipc_sdk import AppClient; c = AppClient(); c.close()"
+    CMD python3 -c "from neoruntime_ipc_sdk import AppClient; c = AppClient(); c.close()"
 
 CMD ["python3", "app.py"]
