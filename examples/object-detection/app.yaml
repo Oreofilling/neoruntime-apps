@@ -10,7 +10,7 @@ metadata:
   email: opensource@camthink.ai
 
 spec:
-  image: registry.local/object-detection:1.0.0
+  image: neoruntime/object-detection:1.0.0
   
   resources:
     cpu: "50%"

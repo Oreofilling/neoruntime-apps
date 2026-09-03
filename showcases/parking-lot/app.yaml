@@ -13,7 +13,7 @@ metadata:
   email: opensource@camthink.ai
 
 spec:
-  image: parking-lot:1.0.0
+  image: neoruntime/parking-lot:1.0.0
 
   resources:
     cpu: "200%"
