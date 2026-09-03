@@ -1,6 +1,6 @@
 FROM python:3.11-slim-bookworm
 
-LABEL version="1.0.0"
+LABEL version="1.0.2"
 LABEL description="Parking Lot Full Element Extraction: vehicles, anti-spoofing, plate OCR"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

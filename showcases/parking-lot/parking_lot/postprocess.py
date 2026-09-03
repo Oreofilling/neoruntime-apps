@@ -281,7 +281,15 @@ def parse_yolo_grid(
                     w = aw * tw / 416.0
                     h = ah * th / 416.0
                     conf = obj_conf * cls_conf
-                    if conf < 0.2:
+                    # Gate calibrated against the HEF's measured output
+                    # distribution (93.72, 2026-09-03): on ground-truth
+                    # plates — isolated renders AND a real photo — obj runs
+                    # 0.35-0.45 (background < 0.3) but cls saturates ~0.5,
+                    # so obj*cls tops out ~0.20. A 0.2 gate rejects every
+                    # plate, synthetic or real; 0.12 keeps ~30% margin under
+                    # the observed plate floor (0.15) while the obj>=0.3
+                    # pre-gate still suppresses background.
+                    if conf < 0.12:
                         continue
                     detections.append((cx - w / 2, cy - h / 2, w, h, conf))
 

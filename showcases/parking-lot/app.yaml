@@ -7,13 +7,13 @@ kind: Application
 metadata:
   id: parking_lot
   name: Parking Lot Full Element Extraction
-  version: 1.0.0
+  version: 1.0.2
   description: "Parking-lot element extraction with vehicle attributes, depth anti-spoofing, and plate OCR."
   author: NeoRuntime Team
   email: opensource@camthink.ai
 
 spec:
-  image: neoruntime/parking-lot:1.0.0
+  image: neoruntime/parking-lot:1.0.2
 
   resources:
     cpu: "200%"
