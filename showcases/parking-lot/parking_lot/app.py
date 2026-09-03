@@ -23,6 +23,8 @@ import numpy as np
 from neoruntime_ipc_sdk import (
     BatchInferItem,
     Config,
+    DspClient,
+    DspError,
     EventClient,
     FdMediaClient,
     Frame,
@@ -33,6 +35,8 @@ from .config import (
     _COCO_VEHICLE_CLASSES,
     DEGRADED_FAILURE_THRESHOLD,
     DEPTH_SPOOF_THRESHOLD,
+    DSP_ENABLED,
+    DSP_QUOTA_COOLDOWN_S,
     INFER_TIMEOUT_MS,
     INFER_WARMUP_COUNT,
     INFER_WARMUP_TIMEOUT_MS,
@@ -60,6 +64,7 @@ from .postprocess import (
     letterbox_crop,
     parse_nms_raw,
     parse_yolo_grid,
+    plate_crop_rects,
     prepare_input,
 )
 from .web import FrameBuffer, create_flask_app, sse_broadcast
@@ -234,6 +239,20 @@ class ParkingLotApp:
         # Last Phase-1 NPU-only latency sum (microseconds), per InferResponse.hw_infer_time_us
         self._last_hw_infer_us: int = 0
 
+        # DSP hardware offload (keep_fd + resize_hw/multi_crop_hw).  The
+        # client is created lazily on first use (devices without the DSP
+        # service disable the path on the first failed job); _dsp_ok is
+        # flipped False on fatal errors, _dsp_retry_ts holds a quota
+        # cooldown deadline.  Counters feed /api/stats["dsp"] for A/B runs.
+        self._dsp_client: Optional[DspClient] = None
+        self._dsp_enabled: bool = DSP_ENABLED
+        self._dsp_ok: bool = True
+        self._dsp_retry_ts: float = 0.0
+        self._dsp_stats: Dict[str, Any] = {
+            "enabled": DSP_ENABLED, "hw_jobs": 0, "cpu_fallbacks": 0,
+            "last_error": "",
+        }
+
     def register_models(self) -> None:
         """Register all required models with the inference service."""
         max_retries = 5
@@ -361,6 +380,126 @@ class ParkingLotApp:
             if src_w != target_w or src_h != target_h:
                 bgr = cv2.resize(bgr, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
             return self._bgr_to_nv12(bgr).flatten()
+
+    # ------------------------------------------------------------------
+    # DSP hardware offload (DspClient).  Whole-frame model-input scaling
+    # (resize_hw) and the plate letterbox tiles (multi_crop_hw with
+    # native letterbox scaling) run as zero-copy jobs sourced from the
+    # keep-fd frame.  Every failure falls back to the CPU paths above —
+    # quota errors cool down and retry, everything else disables the
+    # path for the run (one warning each).
+    # ------------------------------------------------------------------
+
+    def _dsp_active(self) -> bool:
+        """True when the DSP path should be attempted for this frame."""
+        return (self._dsp_enabled and self._dsp_ok
+                and time.monotonic() >= self._dsp_retry_ts)
+
+    def _get_dsp(self) -> Optional[DspClient]:
+        """Lazily create the shared DspClient; None when unusable."""
+        if not self._dsp_active():
+            return None
+        if self._dsp_client is None:
+            try:
+                self._dsp_client = DspClient()
+            except Exception as exc:
+                self._dsp_fallback(exc, "client-init")
+                self._dsp_ok = False
+                return None
+        return self._dsp_client
+
+    def _dsp_fallback(self, exc: BaseException, scope: str) -> None:
+        """Record a DSP failure and choose the CPU-fallback policy.
+
+        Quota errors (daemon code -3) set a 10s cooldown after which the
+        DSP path retries; any other error disables it for the run.  Both
+        log exactly once per transition.
+        """
+        self._dsp_stats["cpu_fallbacks"] += 1
+        self._dsp_stats["last_error"] = f"{scope}: {exc}"
+        if getattr(exc, "code", None) == -3 or "quota" in str(exc).lower():
+            self._dsp_retry_ts = time.monotonic() + DSP_QUOTA_COOLDOWN_S
+            logger.warning(
+                "DSP quota exceeded (%s), CPU fallback for %.0fs then retry",
+                scope, DSP_QUOTA_COOLDOWN_S,
+            )
+        else:
+            self._dsp_ok = False
+            logger.warning(
+                "DSP %s failed (%s); using CPU pipeline for this run", scope, exc,
+            )
+
+    def _dsp_model_input(self, src: Any, mdef: Dict[str, Any]) -> Optional[np.ndarray]:
+        """Whole-frame model input via DSP resize, or None to stay on CPU.
+
+        Only handles NV12 keep-fd sources whose geometry differs from the
+        model input (same-size inputs skip the DSP entirely — a plain
+        cvtColor on the CPU is cheaper than a job plus quota).
+        """
+        if getattr(src, "format", "").upper() != "NV12":
+            return None
+        tw, th = mdef["input_width"], mdef["input_height"]
+        w = getattr(src, "width", 0) or 0
+        h = getattr(src, "height", 0) or 0
+        if not w or not h or (w == tw and h == th):
+            return None
+        dsp = self._get_dsp()
+        if dsp is None:
+            return None
+        try:
+            # stretch matches the CPU cv2.resize semantics used before
+            small = dsp.resize_hw(src, tw, th)
+        except DspError as exc:
+            self._dsp_fallback(exc, "resize")
+            return None
+        self._dsp_stats["hw_jobs"] += 1
+        if mdef["input_format"] == "nv12":
+            return small.flatten()
+        code = (cv2.COLOR_YUV2RGB_NV12 if mdef["input_format"] == "rgb"
+                else cv2.COLOR_YUV2BGR_NV12)
+        return cv2.cvtColor(small, code).flatten()
+
+    def _dsp_plate_tiles(
+        self, src: Any, bboxes: List[Tuple[float, float, float, float]],
+    ) -> Optional[List[Optional[np.ndarray]]]:
+        """Plate letterbox tiles via one DSP multi-crop job, or None for CPU.
+
+        The daemon's letterbox scaling centers the scaled crop (same
+        semantics as letterbox_crop's centered paste), so every tile is
+        produced by a single multi_crop_hw job in rect order.  Degenerate
+        boxes keep their ``None`` slot and the caller substitutes a filled
+        canvas, exactly like the CPU path.
+        """
+        mdef = MODEL_DEFS["plate_recognition"]
+        if mdef["input_format"] != "nv12":
+            return None
+        if getattr(src, "format", "").upper() != "NV12":
+            return None
+        w = getattr(src, "width", 0) or 0
+        h = getattr(src, "height", 0) or 0
+        if not w or not h:
+            return None
+        rects = plate_crop_rects(
+            bboxes, w, h, mdef["input_width"], mdef["input_height"],
+        )
+        idx_map = [i for i, r in enumerate(rects) if r is not None]
+        if not idx_map:
+            return None
+        dsp = self._get_dsp()
+        if dsp is None:
+            return None
+        try:
+            tiles = dsp.multi_crop_hw(
+                src, [rects[i] for i in idx_map], scaling="letterbox",
+            )
+        except DspError as exc:
+            self._dsp_fallback(exc, "plate_tiles")
+            return None
+        self._dsp_stats["hw_jobs"] += 1
+        scattered: List[Optional[np.ndarray]] = [None] * len(bboxes)
+        for slot, tile in zip(idx_map, tiles):
+            scattered[slot] = tile
+        return scattered
 
     # ------------------------------------------------------------------
     # Inference timeout tiering + degraded state machine
@@ -566,7 +705,8 @@ class ParkingLotApp:
         return PlateDetection(bbox=bbox, text=text, confidence=conf)
 
     def _recognize_plates_batch(self, bgr: np.ndarray,
-                                bboxes: List[Tuple[float, float, float, float]]
+                                bboxes: List[Tuple[float, float, float, float]],
+                                dsp_src: Any = None,
                                 ) -> List[PlateDetection]:
         """Recognize all detected plates in one batch RPC.
 
@@ -575,13 +715,27 @@ class ParkingLotApp:
         runs them in parallel via run_async + the NPU scheduler). Falls back to
         per-plate sequential ``infer()`` when InferBatch is unsupported or fails.
 
+        With a keep-fd NV12 ``dsp_src``, the letterbox tiles come from one DSP
+        ``multi_crop_hw`` job (native letterbox scaling); any tile the DSP path
+        did not produce falls back to ``_prepare_plate_input`` on BGR.
+
         Order is preserved (zip with ``bboxes``) so the temporal
         ``plate_accumulator`` sees plates in the same order as before.
         """
         if not bboxes:
             return []
 
-        inputs = [self._prepare_plate_input(bgr, bbox) for bbox in bboxes]
+        dsp_tiles: Optional[List[Optional[np.ndarray]]] = None
+        if dsp_src is not None and self._dsp_active():
+            dsp_tiles = self._dsp_plate_tiles(dsp_src, bboxes)
+
+        def _tile_or_cpu(i: int, bbox: Tuple[float, float, float, float]
+                         ) -> np.ndarray:
+            if dsp_tiles is not None and dsp_tiles[i] is not None:
+                return dsp_tiles[i].flatten()  # type: ignore[union-attr]
+            return self._prepare_plate_input(bgr, bbox)
+
+        inputs = [_tile_or_cpu(i, bbox) for i, bbox in enumerate(bboxes)]
         results: List[Optional[Any]] = [None] * len(inputs)
 
         # Warmup-aware timeout for plate_recognition (steady 3000ms, warmup
@@ -630,7 +784,8 @@ class ParkingLotApp:
     def run_frame_pipeline(self, bgr: np.ndarray,
                            nv12: Optional[np.ndarray] = None,
                            src_w: int = 0, src_h: int = 0, src_fmt: str = "",
-                           timeout_s: float = 10.0) -> PipelineResult:
+                           timeout_s: float = 10.0,
+                           dsp_src: Any = None) -> PipelineResult:
         """Run the full detection pipeline on a single frame.
 
         Phase 1: Vehicle detection, depth estimation, and plate detection
@@ -643,8 +798,11 @@ class ParkingLotApp:
 
         When ``nv12`` + dims + ``src_fmt=="NV12"`` are supplied (live mode),
         Phase-1 whole-frame inputs are prepared via ``_prepare_nv12_input``
-        (zero-copy / single-conversion) instead of the BGR round-trip.  Plate
-        crops in Phase 2 still use BGR (letterbox_crop needs spatial ops).
+        (zero-copy / single-conversion) instead of the BGR round-trip.  With a
+        keep-fd ``dsp_src`` frame, whole-frame scaling goes through DSP
+        ``resize_hw`` first (zero-copy source) and plate crops become one DSP
+        ``multi_crop_hw`` letterbox job; every DSP miss falls back to the
+        CPU paths above.
         """
         t0 = time.monotonic()
         fh, fw = bgr.shape[:2]
@@ -658,6 +816,10 @@ class ParkingLotApp:
         nv12_ok = (nv12 is not None and src_fmt == "NV12" and src_w > 0 and src_h > 0)
 
         def _prep(mdef: Dict[str, Any]) -> np.ndarray:
+            if dsp_src is not None and self._dsp_active():
+                hw = self._dsp_model_input(dsp_src, mdef)
+                if hw is not None:
+                    return hw
             if nv12_ok:
                 return self._prepare_nv12_input(
                     nv12, src_w, src_h,
@@ -774,7 +936,8 @@ class ParkingLotApp:
 
         # -- Phase 2: plate recognition (batched) --------------------------
         # N plates → 1 InferBatch RPC; falls back to sequential internally.
-        plates = self._recognize_plates_batch(bgr, plate_dets)
+        # dsp_src lets the tiles come from one DSP multi_crop letterbox job.
+        plates = self._recognize_plates_batch(bgr, plate_dets, dsp_src=dsp_src)
 
         # -- Depth spoof analysis ------------------------------------------
         spoof_alerts: List[SpoofAlert] = []
@@ -979,6 +1142,10 @@ class ParkingLotApp:
             # Current steady-state inference timeout (ms); warmup window uses
             # INFER_WARMUP_TIMEOUT_MS for the first INFER_WARMUP_COUNT calls.
             "infer_timeout_ms": INFER_TIMEOUT_MS,
+            # DSP offload counters for A/B runs: hw_jobs = successful DSP
+            # jobs, cpu_fallbacks = jobs that went back to CPU (quota hits
+            # + permanent disables), last_error = most recent failure.
+            "dsp": dict(self._dsp_stats),
         }
 
     def get_alerts(self) -> List[Dict[str, Any]]:
@@ -1217,8 +1384,10 @@ class ParkingLotApp:
 
         while self._running:
             try:
-                bgr, nv12, src_w, src_h, src_fmt = self._get_next_frame()
+                bgr, nv12, src_w, src_h, src_fmt, src_frame = self._get_next_frame()
                 if bgr is None:
+                    if src_frame is not None:
+                        src_frame.release()
                     time.sleep(0.01)
                     continue
 
@@ -1226,7 +1395,10 @@ class ParkingLotApp:
 
                 # Run the full detection pipeline (~80 ms).  Pass the raw NV12
                 # buffer + geometry through so the pipeline can take the
-                # zero-copy NV12 direct path when the source is NV12.
+                # zero-copy NV12 direct path when the source is NV12.  A keep-fd
+                # src_frame additionally enables the DSP resize/multi-crop path;
+                # it is released in the finally below (covers the `continue`
+                # error path too — all DSP use happens inside the pipeline).
                 try:
                     result = self.run_frame_pipeline(
                         bgr,
@@ -1235,6 +1407,7 @@ class ParkingLotApp:
                         src_h=src_h,
                         src_fmt=src_fmt,
                         timeout_s=8.0,
+                        dsp_src=src_frame,
                     )
                     self._register_infer_success()
                 except Exception as e:
@@ -1244,7 +1417,11 @@ class ParkingLotApp:
                     logger.warning("Pipeline error: %s", e)
                     continue
 
-                self._process_result(bgr, result, t0)
+                try:
+                    self._process_result(bgr, result, t0)
+                finally:
+                    if src_frame is not None:
+                        src_frame.release()
             except Exception as e:
                 # Watchdog: never let one frame's post-processing kill the
                 # whole inference pipeline. Log full traceback, back off,
@@ -1255,7 +1432,7 @@ class ParkingLotApp:
     def _get_next_frame(self):
         """Return the next frame depending on the current mode.
 
-        Returns a tuple ``(bgr, nv12, w, h, fmt)``:
+        Returns a tuple ``(bgr, nv12, w, h, fmt, src_frame)``:
 
         * ``bgr``  — BGR ndarray (always populated; used for overlay + plate
           crop letter-boxing).
@@ -1264,10 +1441,17 @@ class ParkingLotApp:
           BGR→RGB/NV12 double conversion and feed the model directly.
         * ``w``/``h``/``fmt`` — source frame geometry/format; 0/"" when
           unavailable (upload path or attribute lookup failed).
+        * ``src_frame`` — the keep-fd Frame when the DSP path is active
+          (zero-copy source for resize_hw/multi_crop_hw; the caller must
+          release it), else ``None``.
 
         Live: fetch via the dedicated ``media_infer`` client on the chosen
         infer stream (decoupled from the preview client), with exponential
-        backoff reconnect on transient errors.
+        backoff reconnect on transient errors.  When the DSP path is active
+        the frame is acquired with ``keep_fd=True`` and materialized via
+        ``to_array()`` (keep-fd frames carry a dma-buf handle, not pixels,
+        until first materialization) — the copy cost equals a normal
+        receive, so keep_fd is strictly additive.
         Upload: read next frame from VideoFrameSource (sequential, BGR only).
 
         The upload branch snapshots ``_mode``/``_video_source`` and performs
@@ -1289,23 +1473,24 @@ class ParkingLotApp:
                     self._mode = "live"
                     with self._upload_lock:
                         self._upload_progress["status"] = "idle"
-                # Upload frames are BGR; no NV12 source available.
-                return (frame, None, 0, 0, "")
+                # Upload frames are BGR; no NV12/DSP source available.
+                return (frame, None, 0, 0, "", None)
 
         # Live mode: fetch directly from the inference media client (NOT the
         # capture/preview client) so inference latency/stream are decoupled
         # from preview.  This matches model-showcase's dual-client design.
+        keep = self._dsp_active()
         try:
             frame = self.media_infer.get_frame(
-                self._active_infer_stream, timeout_ms=3000,
+                self._active_infer_stream, timeout_ms=3000, keep_fd=keep,
             )
         except Exception as e:
             logger.warning("Infer media get_frame error: %s", e)
             self._reconnect_infer_media()
-            return (None, None, 0, 0, "")
+            return (None, None, 0, 0, "", None)
 
         if frame is None:
-            return (None, None, 0, 0, "")
+            return (None, None, 0, 0, "", None)
 
         # Frame attributes (image/format/width/height) are exposed by the
         # pybind wrapper but hidden from dir(); use getattr with defaults.
@@ -1313,12 +1498,18 @@ class ParkingLotApp:
         w = getattr(frame, "width", 0) or 0
         h = getattr(frame, "height", 0) or 0
 
+        if keep:
+            # Materialize the dma-buf into .image (cached) — keep-fd frames
+            # start with image=None and every downstream consumer reads
+            # .image (frame_to_bgr, NV12 direct path).
+            frame.to_array()
+
         # NV12 direct path: only valid when the source actually delivered NV12
         # and geometry is known.  Otherwise nv12 stays None and the pipeline
         # falls back to BGR→RGB/NV12 conversion.
         nv12 = frame.image if fmt.upper() == "NV12" else None
         bgr = self.frame_to_bgr(frame)
-        return (bgr, nv12, w, h, fmt)
+        return (bgr, nv12, w, h, fmt, frame if keep else None)
 
     def _process_result(
         self, bgr: np.ndarray, result: PipelineResult, t0: float,
@@ -1561,6 +1752,12 @@ class ParkingLotApp:
         self.media_preview = None
         self.media_infer = None
         self.media_client = None
+        if self._dsp_client is not None:
+            try:
+                self._dsp_client.close()
+            except Exception:
+                pass
+            self._dsp_client = None
 
 
 # ---------------------------------------------------------------------------

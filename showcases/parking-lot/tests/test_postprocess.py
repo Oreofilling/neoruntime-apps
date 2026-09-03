@@ -18,6 +18,7 @@ from parking_lot.postprocess import (
     parse_yolo_grid,
     iou,
     letterbox_crop,
+    plate_crop_rects,
     analyze_depth_spoof,
     SpoofResult,
 )
@@ -206,6 +207,74 @@ class TestLetterboxCrop:
         crop = letterbox_crop(bgr, 0.5, 0.5, 0.0, 0.0, 300, 75)
         assert crop.shape == (75, 300, 3)
         assert np.all(crop == 0)
+
+
+# ---------------------------------------------------------------------------
+# DSP plate-crop rects (mirror of letterbox_crop margins for multi_crop_hw)
+# ---------------------------------------------------------------------------
+
+class TestPlateCropRects:
+    FRAME_W, FRAME_H = 1920, 1080
+    TARGET_W, TARGET_H = 320, 48
+
+    def test_matches_letterbox_crop_region(self) -> None:
+        """rect region must equal letterbox_crop's crop window (±1px even-align)."""
+        bbox = (0.30, 0.40, 0.20, 0.10)
+        rect = plate_crop_rects(
+            [bbox], self.FRAME_W, self.FRAME_H, self.TARGET_W, self.TARGET_H,
+        )[0]
+        assert rect is not None
+        rx, ry, rw, rh, dw, dh = rect
+        # letterbox_crop clamps in BGR (h, w) order; same math on the frame
+        x, y, w, h = bbox
+        mx = 0.10
+        my = 0.35
+        exp_x1 = max(0, int((x - w * mx) * self.FRAME_W))
+        exp_y1 = max(0, int((y - h * my) * self.FRAME_H))
+        exp_x2 = min(self.FRAME_W, int((x + w + w * mx) * self.FRAME_W))
+        exp_y2 = min(self.FRAME_H, int((y + h + h * my) * self.FRAME_H))
+        assert abs(rx - exp_x1) <= 1
+        assert abs(ry - exp_y1) <= 1
+        assert abs((rx + rw) - exp_x2) <= 1
+        assert abs((ry + rh) - exp_y2) <= 1
+        assert (dw, dh) == (self.TARGET_W, self.TARGET_H)
+
+    def test_all_coordinates_even(self) -> None:
+        bboxes = [(0.31, 0.43, 0.17, 0.09), (0.05, 0.05, 0.13, 0.07)]
+        rects = plate_crop_rects(
+            bboxes, self.FRAME_W, self.FRAME_H, self.TARGET_W, self.TARGET_H,
+        )
+        for rect in rects:
+            assert rect is not None
+            assert all(v % 2 == 0 for v in rect)
+
+    def test_clamped_at_frame_edges(self) -> None:
+        # Box straddling the top-left corner: region clamps to the frame.
+        rect = plate_crop_rects(
+            [(0.0, 0.0, 0.1, 0.1)], self.FRAME_W, self.FRAME_H,
+            self.TARGET_W, self.TARGET_H,
+        )[0]
+        assert rect is not None
+        x, y, w, h, _, _ = rect
+        assert x == 0 and y == 0
+        assert x + w <= self.FRAME_W and y + h <= self.FRAME_H
+
+    def test_degenerate_box_maps_to_none(self) -> None:
+        # Zero-size box after clamping cannot form a valid crop region.
+        rects = plate_crop_rects(
+            [(0.5, 0.5, 0.0, 0.0)], self.FRAME_W, self.FRAME_H,
+            self.TARGET_W, self.TARGET_H,
+        )
+        assert rects == [None]
+
+    def test_order_matches_input_and_mixed_validity(self) -> None:
+        bboxes = [(0.3, 0.3, 0.2, 0.1), (0.5, 0.5, 0.0, 0.0), (0.6, 0.2, 0.1, 0.1)]
+        rects = plate_crop_rects(
+            bboxes, self.FRAME_W, self.FRAME_H, self.TARGET_W, self.TARGET_H,
+        )
+        assert len(rects) == 3
+        assert rects[1] is None
+        assert rects[0] is not None and rects[2] is not None
 
 
 # ---------------------------------------------------------------------------

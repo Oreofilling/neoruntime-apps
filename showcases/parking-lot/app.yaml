@@ -7,13 +7,13 @@ kind: Application
 metadata:
   id: parking_lot
   name: Parking Lot Full Element Extraction
-  version: 1.0.2
+  version: 1.1.0
   description: "Parking-lot element extraction with vehicle attributes, depth anti-spoofing, and plate OCR."
   author: NeoRuntime Team
   email: opensource@camthink.ai
 
 spec:
-  image: neoruntime/parking-lot:1.0.2
+  image: neoruntime/parking-lot:1.1.0
 
   resources:
     cpu: "200%"
@@ -87,6 +87,11 @@ spec:
       value: "plate_recognition"
     - name: DEPTH_SPOOF_THRESHOLD
       value: "0.02"
+    # DSP hardware offload (keep_fd + resize_hw/multi_crop_hw) for model-input
+    # scaling and plate letterbox tiles. Set 0 to force the pure-CPU pipeline
+    # for on-device A/B comparisons.
+    - name: PARKING_LOT_DSP
+      value: "1"
     - name: LOG_LEVEL
       value: "info"
     # HD 1080P MSE preview reuses platform-api's hardware H.264 stream

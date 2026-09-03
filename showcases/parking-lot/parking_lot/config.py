@@ -33,6 +33,24 @@ def _model_path(*parts: str) -> str:
         return host
     return os.path.join(_BUNDLED_MODEL_ROOT, os.path.basename(parts[-1]))
 
+
+# ---------------------------------------------------------------------------
+# DSP hardware offload (keep_fd + DspClient resize/multi-crop)
+# ---------------------------------------------------------------------------
+
+# Offloads whole-frame model-input scaling and the plate letterbox tiles to
+# the camera-daemon DSP service via zero-copy keep-fd frames.  A/B switch:
+# PARKING_LOT_DSP=0 forces the pure-CPU pipeline (identical frame flow,
+# plain get_frame, cv2 resize/letterbox) for on-device comparisons.
+DSP_ENABLED = os.environ.get("PARKING_LOT_DSP", "1").strip().lower() not in (
+    "0", "false", "off",
+)
+
+# Quota errors (daemon code -3) fall back to CPU for this long before the
+# DSP path retries — MPix/s budget is shared, so sustained pipelines may
+# oscillate if the retry is immediate.
+DSP_QUOTA_COOLDOWN_S = float(os.environ.get("PARKING_LOT_DSP_COOLDOWN", "10"))
+
 # ---------------------------------------------------------------------------
 # Character set for license plate OCR (CTC decoder)
 # PaddleOCR v5 dictionary — loaded from ppocrv5_dict.txt bundled with the app.
