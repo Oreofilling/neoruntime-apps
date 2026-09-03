@@ -1,6 +1,6 @@
 FROM python:3.11-slim-bookworm
 
-LABEL version="1.4.1"
+LABEL version="1.4.4"
 LABEL description="AI Model Showcase - Dynamic model discovery, RTSP streaming support"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
