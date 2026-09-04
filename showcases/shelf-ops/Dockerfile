@@ -1,6 +1,6 @@
 FROM python:3.11-slim-bookworm
 
-LABEL version="0.3.0"
+LABEL version="0.4.0"
 LABEL description="ShelfOps - slot-anchored CLIP shelf recognition, grid full-frame counting, per-item goods detection, stockout-restock state machine, heatmap analytics"
 
 # HTTPS apt sources: some build networks block plain-HTTP egress (deb.debian.org:80)

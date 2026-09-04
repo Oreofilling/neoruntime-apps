@@ -7,36 +7,40 @@ kind: Application
 metadata:
   id: parking_lot
   name: Parking Lot Full Element Extraction
-  version: 1.1.0
+  version: 1.2.0
   description: "Parking-lot element extraction with vehicle attributes, depth anti-spoofing, and plate OCR."
   author: NeoRuntime Team
   email: opensource@camthink.ai
 
 spec:
-  image: neoruntime/parking-lot:1.1.0
+  image: neoruntime/parking-lot:1.2.0
 
   resources:
     cpu: "200%"
     memory: "2Gi"
 
   # Model dependencies bundled in the image (models/) so installs are
-  # plug-and-play. Only the two platform-safe models are declared here:
-  # scdepthv3 needs no postprocess, and yolov5m_vehicles gets its variant
-  # (postprocess) blob re-applied by the app's runtime re-registration.
+  # plug-and-play, each declared as an AMPK .bin package (exported from the
+  # platform model row). Resolution order at install: when the id already
+  # exists on the device the platform copy wins and the bundle is only hash
+  # compared; on a fresh device app-manager unpacks the package into a
+  # transient registration whose postprocess type comes from the package
+  # metadata (the manifest no longer declares it). yolov5m_vehicles still
+  # gets its variant (postprocess) blob re-applied by the app's runtime
+  # re-registration, which overrides whatever the install produced.
   # license_plate_det / plate_recognition stay OUT of spec.models: an empty
   # variant transient registration would apply the default yolov8 backend
   # (tensor mismatch) and the app skips re-registering models without a
-  # variant — they keep app-side runtime registration + explicit auth below.
+  # variant — they keep app-side runtime registration + explicit auth below
+  # (their bare .hef files remain bundled for that path).
   models:
     vehicle:
       id: yolov5m_vehicles
-      path: /opt/aipc/models/yolov5m_vehicles.hef
-      type: detection
+      path: /opt/aipc/models/yolov5m_vehicles.bin
       required: true
     depth:
       id: scdepthv3
-      path: /opt/aipc/models/scdepthv3.hef
-      type: depth
+      path: /opt/aipc/models/scdepthv3.bin
       required: true
 
   permissions:
