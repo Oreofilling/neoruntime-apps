@@ -4,6 +4,13 @@
 #   - yolo_world_v2s_540.hef — custom dual-input compile
 #     (yolo_world_v2s/input_layer1 640x640x3 uint8 + input_layer2 80x512
 #     uint16); no zoo equivalent.
+#   - clip_vit_b_32_image_encoder_nv12.bin — AMPK package (app.yaml
+#     spec.models path) exported from the platform model row via
+#     platform-api `GET /api/v1/ai/models/:model_id/export`; the embedded
+#     HEF bytes are identical to the vendored/zoo .hef, so the package
+#     stays in sync with the artifact the app falls back to at runtime.
+#     Regenerate after replacing the .hef (the package metadata pins the
+#     HEF sha256).
 # Zoo pinning rationale: v5.3.0/hailo15h matches the device firmware
 # (HailoRT 5.3.0). The zoo clip compile is interface-identical to the device
 # copy (input clip_vit_b_32_image_encoder/input_layer1 NV12 112x224x3, output

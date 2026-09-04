@@ -30,3 +30,4 @@ showcases/*/models/*.hef
 !showcases/parking-lot/models/*.hef
 !showcases/shelf-ops/models/*.hef
 !showcases/gym-ops/models/*.hef
+!showcases/model-showcase/models/*.hef

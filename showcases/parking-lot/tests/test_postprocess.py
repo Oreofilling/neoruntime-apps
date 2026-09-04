@@ -15,8 +15,10 @@ from parking_lot.postprocess import (
     ctc_greedy_decode,
     PlateAccumulator,
     parse_nms_raw,
+    parse_yolo_grid,
     iou,
     letterbox_crop,
+    plate_crop_rects,
     analyze_depth_spoof,
     SpoofResult,
 )
@@ -208,6 +210,74 @@ class TestLetterboxCrop:
 
 
 # ---------------------------------------------------------------------------
+# DSP plate-crop rects (mirror of letterbox_crop margins for multi_crop_hw)
+# ---------------------------------------------------------------------------
+
+class TestPlateCropRects:
+    FRAME_W, FRAME_H = 1920, 1080
+    TARGET_W, TARGET_H = 320, 48
+
+    def test_matches_letterbox_crop_region(self) -> None:
+        """rect region must equal letterbox_crop's crop window (±1px even-align)."""
+        bbox = (0.30, 0.40, 0.20, 0.10)
+        rect = plate_crop_rects(
+            [bbox], self.FRAME_W, self.FRAME_H, self.TARGET_W, self.TARGET_H,
+        )[0]
+        assert rect is not None
+        rx, ry, rw, rh, dw, dh = rect
+        # letterbox_crop clamps in BGR (h, w) order; same math on the frame
+        x, y, w, h = bbox
+        mx = 0.10
+        my = 0.35
+        exp_x1 = max(0, int((x - w * mx) * self.FRAME_W))
+        exp_y1 = max(0, int((y - h * my) * self.FRAME_H))
+        exp_x2 = min(self.FRAME_W, int((x + w + w * mx) * self.FRAME_W))
+        exp_y2 = min(self.FRAME_H, int((y + h + h * my) * self.FRAME_H))
+        assert abs(rx - exp_x1) <= 1
+        assert abs(ry - exp_y1) <= 1
+        assert abs((rx + rw) - exp_x2) <= 1
+        assert abs((ry + rh) - exp_y2) <= 1
+        assert (dw, dh) == (self.TARGET_W, self.TARGET_H)
+
+    def test_all_coordinates_even(self) -> None:
+        bboxes = [(0.31, 0.43, 0.17, 0.09), (0.05, 0.05, 0.13, 0.07)]
+        rects = plate_crop_rects(
+            bboxes, self.FRAME_W, self.FRAME_H, self.TARGET_W, self.TARGET_H,
+        )
+        for rect in rects:
+            assert rect is not None
+            assert all(v % 2 == 0 for v in rect)
+
+    def test_clamped_at_frame_edges(self) -> None:
+        # Box straddling the top-left corner: region clamps to the frame.
+        rect = plate_crop_rects(
+            [(0.0, 0.0, 0.1, 0.1)], self.FRAME_W, self.FRAME_H,
+            self.TARGET_W, self.TARGET_H,
+        )[0]
+        assert rect is not None
+        x, y, w, h, _, _ = rect
+        assert x == 0 and y == 0
+        assert x + w <= self.FRAME_W and y + h <= self.FRAME_H
+
+    def test_degenerate_box_maps_to_none(self) -> None:
+        # Zero-size box after clamping cannot form a valid crop region.
+        rects = plate_crop_rects(
+            [(0.5, 0.5, 0.0, 0.0)], self.FRAME_W, self.FRAME_H,
+            self.TARGET_W, self.TARGET_H,
+        )
+        assert rects == [None]
+
+    def test_order_matches_input_and_mixed_validity(self) -> None:
+        bboxes = [(0.3, 0.3, 0.2, 0.1), (0.5, 0.5, 0.0, 0.0), (0.6, 0.2, 0.1, 0.1)]
+        rects = plate_crop_rects(
+            bboxes, self.FRAME_W, self.FRAME_H, self.TARGET_W, self.TARGET_H,
+        )
+        assert len(rects) == 3
+        assert rects[1] is None
+        assert rects[0] is not None and rects[2] is not None
+
+
+# ---------------------------------------------------------------------------
 # NMS raw parsing
 # ---------------------------------------------------------------------------
 
@@ -248,3 +318,98 @@ class TestParseNmsRaw:
         )
         result = self._mock_result(buf)
         assert parse_nms_raw(result) == []
+
+
+# ---------------------------------------------------------------------------
+# YOLOv4 plate-grid decoding (client-side, license_plate_det)
+# ---------------------------------------------------------------------------
+
+class TestParseYoloGrid:
+    """Regression coverage for the tiny_yolov4 raw-grid decoder.
+
+    The conf gate was recalibrated 0.2 -> 0.12 after on-device measurement
+    (93.72, 2026-09-03): the HEF's obj*cls tops out ~0.20 on ground-truth
+    plates, so the old gate rejected every plate, synthetic or real.
+    """
+
+    @staticmethod
+    def _make_raw_outputs(cells_by_grid):
+        """Build the two raw tensors from {(grid_idx): [(gy,gx,a,vals)]}."""
+        shapes = [(13, 13, 3, 6), (26, 26, 3, 6)]
+        tensors = []
+        for gi, shape in enumerate(shapes):
+            t = np.zeros(shape, dtype=np.uint16)
+            for gy, gx, a, vals in cells_by_grid.get(gi, []):
+                t[gy, gx, a] = np.round(
+                    np.asarray(vals, np.float32) * 65535.0
+                ).astype(np.uint16)
+            tensors.append(t.flatten())
+        return tensors
+
+    @staticmethod
+    def _result(tensors):
+        class GridResult:
+            raw_outputs = tensors
+            objects = []
+        return GridResult()
+
+    def test_measured_plate_signature_passes_gate(self) -> None:
+        # obj=0.40 x cls=0.48 -> conf 0.192: the empirical on-device
+        # signature of a real plate; rejected by the old 0.2 gate.
+        tensors = self._make_raw_outputs({
+            1: [(16, 10, 1, (0.5, 0.5, 0.5, 0.5, 0.40, 0.48))],
+        })
+        boxes = parse_yolo_grid(self._result(tensors), "license_plate_det")
+        assert len(boxes) == 1
+        x, y, w, h = boxes[0]
+        # grid1 anchor 1 = (37, 58): w = 37*0.5/416, cx = 10.5/26.
+        assert x == pytest.approx(10.5 / 26 - (37 * 0.5 / 416) / 2, abs=1e-3)
+        assert y == pytest.approx(16.5 / 26 - (58 * 0.5 / 416) / 2, abs=1e-3)
+
+    def test_background_obj_suppressed(self) -> None:
+        # Below the obj>=0.3 pre-gate: never a detection, whatever cls.
+        tensors = self._make_raw_outputs({
+            0: [(6, 6, 0, (0.5, 0.5, 0.5, 0.5, 0.25, 0.95))],
+            1: [(16, 10, 1, (0.5, 0.5, 0.5, 0.5, 0.25, 0.95))],
+        })
+        assert parse_yolo_grid(self._result(tensors), "license_plate_det") == []
+
+    def test_weak_conf_suppressed(self) -> None:
+        # obj passes but conf 0.07 < 0.12 gate.
+        tensors = self._make_raw_outputs({
+            1: [(16, 10, 1, (0.5, 0.5, 0.5, 0.5, 0.35, 0.20))],
+        })
+        assert parse_yolo_grid(self._result(tensors), "license_plate_det") == []
+
+    def test_uint8_tensor_view_path(self) -> None:
+        tensors = self._make_raw_outputs({
+            1: [(16, 10, 1, (0.5, 0.5, 0.5, 0.5, 0.40, 0.48))],
+        })
+        as_u8 = [t.view(np.uint8) for t in tensors]
+        boxes = parse_yolo_grid(self._result(as_u8), "license_plate_det")
+        assert len(boxes) == 1
+
+    def test_overlapping_detections_nms_keeps_one(self) -> None:
+        # Same cell, anchors 1 and 2, tw/th chosen so the boxes nest with
+        # IoU ~0.79 > 0.45 -> NMS keeps only the higher-conf one.
+        tensors = self._make_raw_outputs({
+            1: [
+                (16, 10, 1, (0.5, 0.5, 1.0, 1.0, 0.40, 0.48)),
+                (16, 10, 2, (0.5, 0.5, 0.55, 0.74, 0.45, 0.50)),
+            ],
+        })
+        boxes = parse_yolo_grid(self._result(tensors), "license_plate_det")
+        assert len(boxes) == 1
+
+    def test_unknown_model_id_returns_empty(self) -> None:
+        tensors = self._make_raw_outputs({
+            1: [(16, 10, 1, (0.5, 0.5, 0.5, 0.5, 0.40, 0.48))],
+        })
+        assert parse_yolo_grid(self._result(tensors), "not_a_model") == []
+
+    def test_missing_second_tensor_returns_empty(self) -> None:
+        # The decoder's contract requires both scale tensors.
+        tensors = self._make_raw_outputs({
+            0: [(6, 6, 0, (0.5, 0.5, 0.5, 0.5, 0.40, 0.48))],
+        })[:1]
+        assert parse_yolo_grid(self._result(tensors), "license_plate_det") == []

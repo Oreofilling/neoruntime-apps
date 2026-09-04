@@ -1,6 +1,6 @@
 FROM python:3.11-slim-bookworm
 
-LABEL version="1.2.1"
+LABEL version="1.4.4"
 LABEL description="AI Model Showcase - Dynamic model discovery, RTSP streaming support"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -25,7 +25,7 @@ WORKDIR /app
 # SDK from PyPI, pinned via --build-arg SDK_VERSION by build_showcase_artifacts.sh;
 # the default only matters for a bare `docker build` without the helper;
 # the pinned source is sdk.lock at the repo root (NEORUNTIME_SDK_VERSION overrides).
-ARG SDK_VERSION=0.7.0
+ARG SDK_VERSION=0.5.0
 RUN pip install --no-cache-dir "neoruntime-ipc-sdk==${SDK_VERSION}"
 
 COPY requirements.txt /app/
@@ -40,6 +40,11 @@ COPY mediamtx.yml /app/mediamtx.yml
 COPY ocr_dict.txt /app/ocr_dict.txt
 COPY templates/ /app/templates/
 COPY static/ /app/static/
+
+# Bundled models (zoo rows via fetch_models.sh + vendored device artifacts).
+# NOT /opt/aipc/models — app.yaml bind-mounts the host model store there,
+# which would shadow image content.
+COPY models/ /opt/aipc/bundled-models/
 
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 

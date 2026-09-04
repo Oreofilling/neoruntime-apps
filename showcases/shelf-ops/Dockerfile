@@ -1,6 +1,6 @@
 FROM python:3.11-slim-bookworm
 
-LABEL version="0.3.0"
+LABEL version="0.4.0"
 LABEL description="ShelfOps - slot-anchored CLIP shelf recognition, grid full-frame counting, per-item goods detection, stockout-restock state machine, heatmap analytics"
 
 # HTTPS apt sources: some build networks block plain-HTTP egress (deb.debian.org:80)
@@ -15,7 +15,7 @@ WORKDIR /app
 # SDK from PyPI, pinned via --build-arg SDK_VERSION by build_showcase_artifacts.sh;
 # the default only matters for a bare `docker build` without the helper;
 # the pinned source is sdk.lock at the repo root (NEORUNTIME_SDK_VERSION overrides).
-ARG SDK_VERSION=0.7.0
+ARG SDK_VERSION=0.5.0
 RUN pip install --no-cache-dir "neoruntime-ipc-sdk==${SDK_VERSION}"
 
 COPY requirements.txt /app/

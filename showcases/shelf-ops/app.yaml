@@ -8,12 +8,12 @@ kind: Application
 metadata:
   id: shelf-ops
   name: ShelfOps Shelf Slot Recognition
-  version: 0.3.0
+  version: 0.4.0
   description: Slot-anchored CLIP recognition (product/empty per slot) or full-frame grid counting (slot_mode), stockout-restock state machine, and time-bucket heatmap analytics
   author: NeoRuntime Team
 
 spec:
-  image: neoruntime/shelf-ops:0.3.0
+  image: neoruntime/shelf-ops:0.4.0
 
   resources:
     cpu: "300%"
@@ -35,18 +35,21 @@ spec:
       container: /data/aipc/etc/shelf-ops
 
   # Bundled model dependencies (image /opt/aipc/bundled-models). Only the
-  # CLIP encoder is declared here: its raw-embedding output needs no
-  # postprocess, so a fresh-device transient registration (empty variant) is
-  # safe and the app treats "already registered" as benign. yolo_world_540
-  # stays OUT of spec.models — it needs the app's runtime registration
-  # (identity variant + declared dual inputs + app-side decode); an
-  # empty-variant transient registration would apply the default yolov8
-  # backend and break inference with no self-heal path.
+  # CLIP encoder is declared here, as an AMPK .bin package exported from the
+  # platform model row: when the id already exists on the device the
+  # platform copy wins; on a fresh device app-manager unpacks the package
+  # into a transient CLIP registration whose postprocess type comes from
+  # the package metadata (the manifest no longer declares it). The encoder's
+  # raw-embedding output is what the app consumes, so the app treats
+  # "already registered" as benign. yolo_world_540 stays OUT of
+  # spec.models — it needs the app's runtime registration (identity variant
+  # + declared dual inputs + app-side decode); a package registration would
+  # apply the default yolov8 backend and break inference with no self-heal
+  # path (its bare .hef stays bundled for that path).
   models:
     clip:
       id: clip_vit_b_32
-      path: /opt/aipc/bundled-models/clip_vit_b_32_image_encoder_nv12.hef
-      type: embedding
+      path: /opt/aipc/bundled-models/clip_vit_b_32_image_encoder_nv12.bin
       required: true
 
   permissions:

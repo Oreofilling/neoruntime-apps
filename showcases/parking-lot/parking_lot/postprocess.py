@@ -281,7 +281,15 @@ def parse_yolo_grid(
                     w = aw * tw / 416.0
                     h = ah * th / 416.0
                     conf = obj_conf * cls_conf
-                    if conf < 0.2:
+                    # Gate calibrated against the HEF's measured output
+                    # distribution (93.72, 2026-09-03): on ground-truth
+                    # plates — isolated renders AND a real photo — obj runs
+                    # 0.35-0.45 (background < 0.3) but cls saturates ~0.5,
+                    # so obj*cls tops out ~0.20. A 0.2 gate rejects every
+                    # plate, synthetic or real; 0.12 keeps ~30% margin under
+                    # the observed plate floor (0.15) while the obj>=0.3
+                    # pre-gate still suppresses background.
+                    if conf < 0.12:
                         continue
                     detections.append((cx - w / 2, cy - h / 2, w, h, conf))
 
@@ -355,6 +363,45 @@ def prepare_input(
 _prepare_input = prepare_input
 
 
+# Plate-crop margins shared by the CPU letterbox path and the DSP
+# multi-crop path: horizontal 10%, vertical 35% of the box size (the OCR
+# model needs context above/below the plate line).
+PLATE_MARGIN_X = 0.10
+PLATE_MARGIN_Y = 0.35
+
+
+def plate_crop_rects(
+    bboxes: List[Tuple[float, float, float, float]],
+    frame_w: int,
+    frame_h: int,
+    target_w: int,
+    target_h: int,
+) -> List[Optional[Tuple[int, int, int, int, int, int]]]:
+    """Margin-expand normalized plate boxes into DSP multi-crop rects.
+
+    Mirrors letterbox_crop()'s margin + clamp math, then even-aligns every
+    coordinate and size (the DSP service requires even NV12 crop geometry —
+    at most a 1-pixel difference from the CPU path). Degenerate boxes map
+    to ``None`` so the caller can substitute a filled canvas. Output order
+    matches ``bboxes``.
+    """
+    rects: List[Optional[Tuple[int, int, int, int, int, int]]] = []
+    for x, y, w, h in bboxes:
+        x1 = max(0, int((x - w * PLATE_MARGIN_X) * frame_w)) & ~1
+        y1 = max(0, int((y - h * PLATE_MARGIN_Y) * frame_h)) & ~1
+        x2 = min(frame_w, int((x + w + w * PLATE_MARGIN_X) * frame_w)) & ~1
+        y2 = min(frame_h, int((y + h + h * PLATE_MARGIN_Y) * frame_h)) & ~1
+        if x2 <= x1 or y2 <= y1:
+            rects.append(None)
+            continue
+        rects.append((x1, y1, x2 - x1, y2 - y1, target_w, target_h))
+    return rects
+
+
+# Alias
+_plate_crop_rects = plate_crop_rects
+
+
 def letterbox_crop(
     bgr: np.ndarray,
     x: float, y: float, w: float, h: float,
@@ -363,7 +410,7 @@ def letterbox_crop(
 ) -> np.ndarray:
     """Extract and letterbox-resize a crop from a BGR image."""
     fh, fw = bgr.shape[:2]
-    mx, my = 0.10, 0.35
+    mx, my = PLATE_MARGIN_X, PLATE_MARGIN_Y
     x1 = max(0, int((x - w * mx) * fw))
     y1 = max(0, int((y - h * my) * fh))
     x2 = min(fw, int((x + w + w * mx) * fw))
