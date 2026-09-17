@@ -79,7 +79,7 @@ jobs:
           git checkout -b "$BRANCH"
           echo "$NEW_VERSION" > sdk.lock
           # Keep the bare `docker build` fallback defaults in sync with the lock.
-          grep -rl '^ARG SDK_VERSION=' examples showcases \
+          grep -rl '^ARG SDK_VERSION=' examples showcases templates tools \
             | xargs sed -i "s/^ARG SDK_VERSION=.*/ARG SDK_VERSION=${NEW_VERSION}/"
           git commit -am "chore: bump neoruntime-ipc-sdk to ${NEW_VERSION}"
           git push origin "$BRANCH"
@@ -89,7 +89,7 @@ jobs:
 
           - Canary: \`examples/person-detection\` built for arm64 and smoke-tested with
             \`NEORUNTIME_SDK_VERSION=${NEW_VERSION}\` in the [sdk-probe run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) — passed.
-          - Changes: \`sdk.lock\` + the \`ARG SDK_VERSION\` defaults in all example/showcase Dockerfiles.
+          - Changes: \`sdk.lock\` + the \`ARG SDK_VERSION\` defaults in all app Dockerfiles.
 
           Note: workflows opened by \`GITHUB_TOKEN\` do not trigger CI on the PR.
           The canary above already validated the new SDK; to get the full matrix,

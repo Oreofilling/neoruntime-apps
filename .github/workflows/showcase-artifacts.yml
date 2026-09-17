@@ -10,11 +10,13 @@ on:
       - "showcases/**"
       - "scripts/build_showcase_artifacts.sh"
       - ".github/workflows/showcase-artifacts.yml"
+      - "sdk.lock"
   pull_request:
     paths:
       - "showcases/**"
       - "scripts/build_showcase_artifacts.sh"
       - ".github/workflows/showcase-artifacts.yml"
+      - "sdk.lock"
   workflow_dispatch:
     inputs:
       showcase:

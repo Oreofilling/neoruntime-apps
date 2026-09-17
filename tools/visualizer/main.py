@@ -440,11 +440,11 @@ class Visualizer:
     def frame_to_bgr(self, frame: Frame) -> np.ndarray:
         """Convert frame to BGR format for OpenCV"""
         if frame.format == "NV12":
-            return cv2.cvtColor(frame.image, cv2.COLOR_YUV2BGR_NV12)
+            return cv2.cvtColor(frame.to_array(), cv2.COLOR_YUV2BGR_NV12)
         elif frame.format == "RGB":
-            return cv2.cvtColor(frame.image, cv2.COLOR_RGB2BGR)
+            return cv2.cvtColor(frame.to_array(), cv2.COLOR_RGB2BGR)
         elif frame.format == "BGR":
-            return frame.image
+            return frame.to_array()
         else:
             rgb = frame.to_rgb()
             return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)

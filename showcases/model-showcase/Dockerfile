@@ -1,6 +1,6 @@
 FROM python:3.11-slim-bookworm
 
-LABEL version="1.4.4"
+LABEL version="1.4.6"
 LABEL description="AI Model Showcase - Dynamic model discovery, RTSP streaming support"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -22,11 +22,20 @@ RUN set -e; \
 
 WORKDIR /app
 
-# SDK from PyPI, pinned via --build-arg SDK_VERSION by build_showcase_artifacts.sh;
-# the default only matters for a bare `docker build` without the helper;
-# the pinned source is sdk.lock at the repo root (NEORUNTIME_SDK_VERSION overrides).
-ARG SDK_VERSION=0.5.0
-RUN pip install --no-cache-dir "neoruntime-ipc-sdk==${SDK_VERSION}"
+# SDK from a local wheel when present, otherwise PyPI.  The local wheel path
+# lets release candidates ride unpublished SDK changes during bundle builds.
+# The default only matters for a bare `docker build` without the helper; the
+# pinned source is sdk.lock at the repo root (NEORUNTIME_SDK_VERSION overrides).
+ARG SDK_VERSION=0.8.0
+COPY sdk-wheels/ /tmp/sdk-wheels/
+RUN set -e; \
+    sdk_wheel="$(find /tmp/sdk-wheels -maxdepth 1 -name "neoruntime_ipc_sdk-${SDK_VERSION}-*.whl" -print -quit)"; \
+    if [ -n "$sdk_wheel" ]; then \
+        pip install --no-cache-dir "$sdk_wheel"; \
+    else \
+        pip install --no-cache-dir "neoruntime-ipc-sdk==${SDK_VERSION}"; \
+    fi; \
+    rm -rf /tmp/sdk-wheels
 
 COPY requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt
