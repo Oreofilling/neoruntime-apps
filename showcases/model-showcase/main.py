@@ -707,6 +707,7 @@ MODEL_CATALOG: List[Dict[str, Any]] = [
             {
                 "id": "license_plate_det",
                 "role": "detector",
+                "category": "detection",
                 "path": _model_path("detection", "tiny_yolov4_license_plates.hef"),
                 "type": "detection",
                 "register_type": "",
@@ -717,6 +718,7 @@ MODEL_CATALOG: List[Dict[str, Any]] = [
             {
                 "id": "lprnet",
                 "role": "recognizer",
+                "category": "ocr",
                 "path": _model_path("ocr", "lprnet.hef"),
                 "type": "ocr_recognition",
                 "input_format": "rgb",
@@ -735,6 +737,7 @@ MODEL_CATALOG: List[Dict[str, Any]] = [
             {
                 "id": "ocr_detection",
                 "role": "detector",
+                "category": "ocr",
                 "path": _model_path("ocr", "paddle_ocr_v5_mobile_detection.hef"),
                 "type": "ocr_detection",
                 "input_format": "rgb",
@@ -744,6 +747,7 @@ MODEL_CATALOG: List[Dict[str, Any]] = [
             {
                 "id": "ocr_recognition",
                 "role": "recognizer",
+                "category": "ocr",
                 "path": _model_path("ocr", "paddle_ocr_v5_mobile_recognition_nv12.hef"),
                 "type": "ocr_recognition",
                 "input_format": "nv12",
@@ -1703,9 +1707,10 @@ class ModelShowcase:
         self._reaper_thread: Optional[threading.Thread] = None
         # Models that must stay resident alongside the current model. The
         # reaper evicts everything else so leaked network groups (left behind
-        # by a timed-out infer holding ref_count) get cleaned up. Populated in
-        # _verify_current_model (startup) and switch_model via
-        # _compute_pinned_models.
+        # by a timed-out infer holding ref_count) get cleaned up. Seeded on
+        # switch_model and refresh_model_paths (both under _model_lock) via
+        # _compute_pinned_models. Empty until then — the reaper skips empty
+        # pin sets, so nothing is evicted before the first seed.
         self._pinned_models: set = set()
 
         self.stream_id = os.environ.get("STREAM_ID", "main")
@@ -1840,24 +1845,40 @@ class ModelShowcase:
         so a freshly provisioned host file is invisible until this runs (or
         the app restarts). Returns the ids that became available.
 
-        Pipeline stages are always image-bundled, so only single-file and
-        genai entries need re-resolution.
+        Pipeline stages resolve through the same host-first/bundled-fallback
+        rule as single-file entries — stages may equally be provisioned on
+        the host store (e.g. devices syncing models from another unit), so
+        each stage carries its own ``category`` for re-resolution.
         """
         before = {m["id"] for m in AVAILABLE_MODELS}
         for m in MODEL_CATALOG:
-            if "stages" in m or "path" not in m or not m.get("category"):
+            if "stages" in m:
+                for stage in m["stages"]:
+                    category = stage.get("category")
+                    if not category:
+                        continue
+                    host = os.path.join(_MODEL_ROOT, category,
+                                        os.path.basename(stage["path"]))
+                    if os.path.isfile(host):
+                        stage["path"] = host
+                continue
+            if "path" not in m or not m.get("category"):
                 continue
             host = os.path.join(_MODEL_ROOT, m["category"], os.path.basename(m["path"]))
             if os.path.isfile(host):
                 m["path"] = host
         self._discover_models()
-        return sorted({m["id"] for m in AVAILABLE_MODELS} - before)
 
-        # Seed the reaper pin set with the startup model so the background
-        # reaper never evicts the initially-loaded model before the first
-        # explicit switch.
-        if self._current_model_info is not None:
-            self._pinned_models = self._compute_pinned_models(self._current_model_info)
+        # Seed the reaper pin set with the current model so the background
+        # reaper never evicts the initially-loaded model (or re-resolved
+        # pipeline stages) before the first explicit switch. Same lock as
+        # switch_model: a concurrent model switch must not have its pins
+        # clobbered by a refresh that read the previous model info.
+        with self._model_lock:
+            if self._current_model_info is not None:
+                self._pinned_models = self._compute_pinned_models(self._current_model_info)
+
+        return sorted({m["id"] for m in AVAILABLE_MODELS} - before)
 
     def _populate_input_shapes(self) -> None:
         try:
@@ -2093,6 +2114,15 @@ class ModelShowcase:
         catalog = next((m for m in MODEL_CATALOG if m["id"] == mid), None)
         if not catalog:
             logger.error("Model %s not found in catalog", mid)
+            return
+        if "stages" in catalog:
+            # Pipeline entries have no top-level "path" — registering them
+            # means registering each stage. Callers that reach this method
+            # with a pipeline (startup verify, infer-loop auto-recovery)
+            # must not fall through to the single-model register below.
+            # force is passed through so a stale list_models() never makes
+            # pipeline recovery skip re-registration.
+            self._ensure_pipeline_registered(catalog, force=force)
             return
 
         # Do NOT synchronously evict other resident models here. ai-runtime's
@@ -2409,7 +2439,8 @@ class ModelShowcase:
     # Pipeline registration
     # ------------------------------------------------------------------
 
-    def _ensure_pipeline_registered(self, pipeline_info: Dict[str, Any]) -> None:
+    def _ensure_pipeline_registered(self, pipeline_info: Dict[str, Any],
+                                    force: bool = False) -> None:
         stages = pipeline_info.get("stages", [])
         if not stages:
             return
@@ -2437,7 +2468,10 @@ class ModelShowcase:
                         break
         for stage in stages:
             sid = stage["id"]
-            if sid in registered:
+            # force bypasses the presence check: list_models() can be stale
+            # right after a service restart (same contract as the single-file
+            # force path used by the infer-loop auto-recovery).
+            if sid in registered and not force:
                 logger.info("Pipeline stage %s already registered", sid)
                 continue
             try:
@@ -4103,7 +4137,12 @@ class ModelShowcase:
         self.running = True
         self._start_infer_thread()
         self._start_npu_stats_thread()
-        threading.Thread(target=self._push_clip_labels, daemon=True).start()
+        # CLIP labels are only meaningful (and only accepted by the service)
+        # while a clip model is the current one — pushing at startup with a
+        # different current model is rejected with -2801. The switch path
+        # pushes after registration anyway (see switch_model).
+        if self.current_model_type == "clip":
+            threading.Thread(target=self._push_clip_labels, daemon=True).start()
         self._reaper_thread = threading.Thread(
             target=self._reaper_loop, name="model-reaper", daemon=True,
         )
@@ -5073,7 +5112,7 @@ def create_app(showcase: ModelShowcase) -> Flask:
 
         streams = {
             "mjpeg": {
-                "url":         rehost(f"http://{host}:{showcase.web_port}/video_feed"),
+                "url":         rehost(f"http://{host}:{showcase.web_port}/stream"),
                 "type":        "mjpeg",
                 "description": "MJPEG stream (AI overlay rendered in Python)",
                 "active":      status["mode"] in ("mjpeg", "both"),
