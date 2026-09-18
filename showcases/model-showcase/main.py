@@ -48,6 +48,10 @@ from neoruntime_ipc_sdk import (
     Config,
     Frame,
     EventClient,
+    DspClient,
+    bgr_to_nv12 as sdk_bgr_to_nv12,
+    nv12_to_rgb as sdk_nv12_to_rgb,
+    rgb_to_nv12 as sdk_rgb_to_nv12,
 )
 import urllib.error
 
@@ -1718,6 +1722,18 @@ class ModelShowcase:
         self.preview_width = int(os.environ.get("PREVIEW_WIDTH", "640"))
         self.preview_height = int(os.environ.get("PREVIEW_HEIGHT", "360"))
         self.preview_fps = int(os.environ.get("PREVIEW_FPS", "15"))
+        self._hw_frame_prep_enabled = os.environ.get("HW_FRAME_PREP_ENABLED", "1") != "0"
+        self._hw_preview_enabled = os.environ.get("HW_PREVIEW_ENABLED", "1") != "0"
+        self._infer_dsp: Optional[DspClient] = None
+        self._infer_hw_retry_at: float = 0.0
+        self._infer_hw_retry_interval: float = float(
+            os.environ.get("HW_INFER_PREP_RETRY_INTERVAL", "5.0")
+        )
+        self._preview_dsp: Optional[DspClient] = None
+        self._preview_hw_retry_at: float = 0.0
+        self._preview_hw_retry_interval: float = float(
+            os.environ.get("HW_PREVIEW_RETRY_INTERVAL", "5.0")
+        )
         # Inference RPC timeout. Normal Hailo infer is ~10-50 ms; a stall
         # past this is treated as NPU contention. Kept well below the old
         # 5 s default so a stalled infer releases its model ref_count (and
@@ -2321,7 +2337,7 @@ class ModelShowcase:
         tw, th = lm_info["input_width"], lm_info["input_height"]
         resized = cv2.resize(crop, (tw, th))
 
-        lm_input = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB).flatten()
+        lm_input = np.ascontiguousarray(resized[:, :, ::-1]).flatten()
         t2 = time.monotonic()
         lm_result = self.infer_client.infer(
             lm_input, model_id="face_landmarks", timeout_ms=3000,
@@ -2528,7 +2544,33 @@ class ModelShowcase:
         logger.error("Preview media reconnect failed after 3 attempts")
 
     @staticmethod
-    def _bgr_to_nv12(bgr: np.ndarray) -> np.ndarray:
+    def _try_sdk_array(fn: Any, *args: Any) -> Optional[np.ndarray]:
+        """Call an SDK helper when the real SDK is present.
+
+        Unit tests import this module with a MagicMock SDK stub.  Treat
+        non-ndarray returns as "helper unavailable" and keep the local fallback.
+        """
+        try:
+            out = fn(*args)
+        except Exception as e:
+            logger.debug("SDK helper %s unavailable: %s", getattr(fn, "__name__", fn), e)
+            return None
+        return out if isinstance(out, np.ndarray) else None
+
+    @staticmethod
+    def _rgb_to_nv12_cpu(rgb: np.ndarray) -> np.ndarray:
+        h, w = rgb.shape[:2]
+        i420 = cv2.cvtColor(rgb, cv2.COLOR_RGB2YUV_I420)
+        y_plane = i420[:h, :]
+        u_plane = i420[h:h + h // 4, :].reshape(h // 2, w // 2)
+        v_plane = i420[h + h // 4:, :].reshape(h // 2, w // 2)
+        uv_plane = np.empty((h // 2, w), dtype=np.uint8)
+        uv_plane[:, 0::2] = u_plane
+        uv_plane[:, 1::2] = v_plane
+        return np.vstack([y_plane, uv_plane])
+
+    @staticmethod
+    def _bgr_to_nv12_cpu(bgr: np.ndarray) -> np.ndarray:
         h, w = bgr.shape[:2]
         i420 = cv2.cvtColor(bgr, cv2.COLOR_BGR2YUV_I420)
         y_plane = i420[:h, :]
@@ -2540,6 +2582,28 @@ class ModelShowcase:
         return np.vstack([y_plane, uv_plane])
 
     @staticmethod
+    def _rgb_to_nv12(rgb: np.ndarray) -> np.ndarray:
+        rgb = np.ascontiguousarray(rgb)
+        routed = ModelShowcase._try_sdk_array(sdk_rgb_to_nv12, rgb)
+        if routed is not None:
+            return routed
+        return ModelShowcase._rgb_to_nv12_cpu(rgb)
+
+    @staticmethod
+    def _bgr_to_nv12(bgr: np.ndarray) -> np.ndarray:
+        bgr = np.ascontiguousarray(bgr)
+        # SDK 0.7.4 routes rgb_to_nv12 through accel; do a cheap channel swap
+        # first so BGR arrays can use the same DSP convert leg.
+        rgb = np.ascontiguousarray(bgr[:, :, ::-1])
+        routed = ModelShowcase._try_sdk_array(sdk_rgb_to_nv12, rgb)
+        if routed is not None:
+            return routed
+        routed = ModelShowcase._try_sdk_array(sdk_bgr_to_nv12, bgr)
+        if routed is not None:
+            return routed
+        return ModelShowcase._bgr_to_nv12_cpu(bgr)
+
+    @staticmethod
     def _nv12_resize(nv12: np.ndarray, src_w: int, src_h: int,
                      dst_w: int, dst_h: int) -> np.ndarray:
         """Resize NV12 frame by resizing Y and UV planes separately.
@@ -2547,6 +2611,21 @@ class ModelShowcase:
         Avoids NV12->BGR->resize->BGR->NV12 round-trip.  Operates directly
         on the luma and chroma planes with cv2.resize (INTER_LINEAR).
         """
+        try:
+            from neoruntime_ipc_sdk import get_default_router
+
+            routed = ModelShowcase._try_sdk_array(
+                get_default_router().run,
+                "resize_nv12",
+                nv12,
+                (src_w, src_h),
+                (dst_w, dst_h),
+            )
+            if routed is not None:
+                return routed
+        except Exception as e:
+            logger.debug("SDK resize_nv12 route unavailable: %s", e)
+
         y_plane = nv12[:src_h, :]                          # (src_h, src_w)
         uv_plane = nv12[src_h:src_h + src_h // 2, :]      # (src_h/2, src_w)
 
@@ -2555,6 +2634,162 @@ class ModelShowcase:
         uv_out = cv2.resize(uv_plane, (dst_w, dst_h // 2), interpolation=cv2.INTER_LINEAR)
 
         return np.vstack([y_out, uv_out])
+
+    @staticmethod
+    def _nv12_to_rgb(nv12: np.ndarray, width: int, height: int) -> np.ndarray:
+        routed = ModelShowcase._try_sdk_array(sdk_nv12_to_rgb, nv12, width, height)
+        if routed is not None:
+            return routed
+        return cv2.cvtColor(nv12, cv2.COLOR_YUV2RGB_NV12)
+
+    @staticmethod
+    def _nv12_to_bgr(nv12: np.ndarray, width: int, height: int) -> np.ndarray:
+        rgb = ModelShowcase._nv12_to_rgb(nv12, width, height)
+        return np.ascontiguousarray(rgb[:, :, ::-1])
+
+    @staticmethod
+    def _encode_bgr_jpeg(bgr: np.ndarray, quality: int = 85) -> bytes:
+        ok, jpeg = cv2.imencode(
+            ".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, int(quality)]
+        )
+        if not ok:
+            raise RuntimeError("JPEG encode failed")
+        return jpeg.tobytes()
+
+    @staticmethod
+    def _has_live_handle(frame: Any) -> bool:
+        handle = getattr(frame, "handle", None)
+        return handle is not None and not getattr(handle, "closed", False)
+
+    @staticmethod
+    def _release_frame(frame: Any) -> None:
+        release = getattr(frame, "release", None)
+        if callable(release):
+            try:
+                release()
+            except Exception:
+                pass
+
+    def _close_preview_dsp(self) -> None:
+        dsp = self._preview_dsp
+        self._preview_dsp = None
+        if dsp is not None:
+            try:
+                dsp.close()
+            except Exception:
+                pass
+
+    def _get_preview_dsp(self) -> DspClient:
+        if self._preview_dsp is None:
+            self._preview_dsp = DspClient()
+        return self._preview_dsp
+
+    def _close_infer_dsp(self) -> None:
+        dsp = getattr(self, "_infer_dsp", None)
+        self._infer_dsp = None
+        if dsp is not None:
+            try:
+                dsp.close()
+            except Exception:
+                pass
+
+    def _get_infer_dsp(self) -> DspClient:
+        if getattr(self, "_infer_dsp", None) is None:
+            self._infer_dsp = DspClient()
+        return self._infer_dsp
+
+    def _resize_frame_for_input(self, frame: Frame, width: int, height: int) -> Frame:
+        if width <= 0 or height <= 0 or (frame.width, frame.height) == (width, height):
+            return frame
+        now = time.monotonic()
+        if (
+            getattr(self, "_hw_frame_prep_enabled", True)
+            and self._has_live_handle(frame)
+            and now >= getattr(self, "_infer_hw_retry_at", 0.0)
+        ):
+            try:
+                image = self._get_infer_dsp().resize_hw(
+                    frame,
+                    width,
+                    height,
+                    scaling="stretch",
+                    cpu_fallback=False,
+                )
+                if not isinstance(image, np.ndarray):
+                    raise RuntimeError("DSP resize did not return an ndarray")
+                return Frame(
+                    sequence=getattr(frame, "sequence", 0),
+                    timestamp_ns=getattr(frame, "timestamp_ns", 0),
+                    width=width,
+                    height=height,
+                    format=frame.format,
+                    image=image,
+                    metadata=dict(getattr(frame, "metadata", {}) or {}),
+                )
+            except Exception as e:
+                interval = getattr(self, "_infer_hw_retry_interval", 5.0)
+                self._infer_hw_retry_at = time.monotonic() + interval
+                self._close_infer_dsp()
+                logger.debug(
+                    "Hardware input resize unavailable; SDK fallback for %.1fs: %s",
+                    interval,
+                    e,
+                )
+        return frame.resize(width, height, mode="stretch")
+
+    def _encode_preview_frame_hw(self, frame: Frame) -> Optional[bytes]:
+        """Encode a retained camera frame through DSP resize + EncodeImage.
+
+        The resized destination stays daemon-side and is handed straight to
+        encode_jpeg_hw(src_buffer_id=...), so the MJPEG hot path avoids both
+        Python pixel read-back and cv2.imencode when the camera daemon exposes
+        the SDK 0.7.4 surfaces.
+        """
+        if not self._hw_preview_enabled or not self._has_live_handle(frame):
+            return None
+        now = time.monotonic()
+        if now < self._preview_hw_retry_at:
+            return None
+        try:
+            dsp = self._get_preview_dsp()
+            if (frame.width, frame.height) == (self.preview_width, self.preview_height):
+                jpeg = dsp.encode_jpeg_hw(
+                    frame, quality=self.jpeg_quality, cpu_fallback=False,
+                )
+            else:
+                job = None
+                try:
+                    job = dsp.resize_hw(
+                        frame,
+                        self.preview_width,
+                        self.preview_height,
+                        scaling="stretch",
+                        cpu_fallback=False,
+                        wait=False,
+                    )
+                    job.wait_result(timeout_s=2.0)
+                    jpeg = dsp.encode_jpeg_hw(
+                        None,
+                        quality=self.jpeg_quality,
+                        src_buffer_id=job.buffer_id,
+                        cpu_fallback=False,
+                    )
+                finally:
+                    if job is not None:
+                        try:
+                            job.release()
+                        except Exception:
+                            pass
+            return bytes(jpeg) if isinstance(jpeg, (bytes, bytearray)) else None
+        except Exception as e:
+            self._preview_hw_retry_at = time.monotonic() + self._preview_hw_retry_interval
+            self._close_preview_dsp()
+            logger.debug(
+                "Hardware preview encode unavailable; CPU fallback for %.1fs: %s",
+                self._preview_hw_retry_interval,
+                e,
+            )
+            return None
 
     def _prepare_nv12_input(self, nv12: np.ndarray, src_w: int, src_h: int,
                              target_w: int, target_h: int,
@@ -2565,15 +2800,17 @@ class ModelShowcase:
         - NV12 model + resize needed  -> resize Y/UV separately, then flatten
         - RGB model                   -> NV12->RGB directly (one conversion)
         """
+        input_fmt = (input_fmt or "nv12").lower()
         if input_fmt == "nv12":
             if src_w == target_w and src_h == target_h:
                 return nv12.flatten()
             resized = self._nv12_resize(nv12, src_w, src_h, target_w, target_h)
             return resized.flatten()
         elif input_fmt == "rgb":
-            rgb = cv2.cvtColor(nv12, cv2.COLOR_YUV2RGB_NV12)
             if src_w != target_w or src_h != target_h:
-                rgb = cv2.resize(rgb, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+                nv12 = self._nv12_resize(nv12, src_w, src_h, target_w, target_h)
+                src_w, src_h = target_w, target_h
+            rgb = self._nv12_to_rgb(nv12, src_w, src_h)
             return rgb.flatten()
         else:
             # Fallback: convert via BGR for unusual formats
@@ -2581,7 +2818,7 @@ class ModelShowcase:
                 "Unexpected input format '%s' for NV12 source, using BGR fallback",
                 input_fmt,
             )
-            bgr = cv2.cvtColor(nv12, cv2.COLOR_YUV2BGR_NV12)
+            bgr = self._nv12_to_bgr(nv12, src_w, src_h)
             if src_w != target_w or src_h != target_h:
                 bgr = cv2.resize(bgr, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
             return self._bgr_to_nv12(bgr).flatten()
@@ -2602,14 +2839,16 @@ class ModelShowcase:
             return None
         try:
             infer_stream = self._active_infer_stream
-            frame = self.media_infer.get_frame(infer_stream, timeout_ms=3000)
+            frame = self.media_infer.get_frame(
+                infer_stream, timeout_ms=3000, keep_fd=True,
+            )
         except Exception as e:
             logger.warning("Infer get_frame error: %s", e)
             self._reconnect_infer_media()
             return None
         if frame is None:
             return None
-        return frame.image, frame.width, frame.height, frame.format
+        return frame, frame.width, frame.height, frame.format
 
     @staticmethod
     def _to_bgr(raw_data: np.ndarray, src_fmt: str) -> np.ndarray:
@@ -2617,27 +2856,49 @@ class ModelShowcase:
         if src_fmt == "BGR":
             return raw_data
         elif src_fmt == "NV12":
-            return cv2.cvtColor(raw_data, cv2.COLOR_YUV2BGR_NV12)
+            return ModelShowcase._nv12_to_bgr(
+                raw_data, raw_data.shape[1], raw_data.shape[0] * 2 // 3,
+            )
         elif src_fmt == "RGB":
             return cv2.cvtColor(raw_data, cv2.COLOR_RGB2BGR)
         else:
-            return cv2.cvtColor(raw_data, cv2.COLOR_YUV2BGR_NV12)
+            return ModelShowcase._nv12_to_bgr(
+                raw_data, raw_data.shape[1], raw_data.shape[0] * 2 // 3,
+            )
 
     def _prepare_input(self, frame: Frame, target_w: int, target_h: int,
                        input_fmt: str) -> np.ndarray:
-        # NV12-direct: avoid BGR round-trip when frame is already NV12
-        if frame.format == "NV12" and frame.width > 0 and frame.height > 0:
-            return self._prepare_nv12_input(
-                frame.image, frame.width, frame.height,
-                target_w, target_h, input_fmt,
-            )
-        bgr = self.frame_to_bgr(frame)
-        src_h, src_w = bgr.shape[:2]
-        if src_w != target_w or src_h != target_h:
-            bgr = cv2.resize(bgr, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+        """Prepare a model tensor from an SDK Frame, using SDK hardware routes.
+
+        Camera frames arrive as retained dma-bufs.  Frame.resize() can import
+        them into camera-daemon's DSP path, while SDK 0.7.4 color helpers route
+        RGB<->NV12 conversion through the accel router when the daemon exposes it.
+        """
+        input_fmt = (input_fmt or "nv12").lower()
+        work = self._resize_frame_for_input(frame, target_w, target_h)
+
+        fmt = (work.format or "").upper()
         if input_fmt == "rgb":
-            return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB).flatten()
-        return self._bgr_to_nv12(bgr).flatten()
+            if fmt == "RGB":
+                return np.ascontiguousarray(work.to_array()).flatten()
+            if fmt == "NV12":
+                arr = work.to_array()
+                return self._nv12_to_rgb(arr, work.width, work.height).flatten()
+            if fmt == "BGR":
+                return np.ascontiguousarray(work.to_array()[:, :, ::-1]).flatten()
+            return work.to_rgb().flatten()
+
+        if input_fmt == "nv12":
+            if fmt == "NV12":
+                return np.ascontiguousarray(work.to_array()).flatten()
+            if fmt == "RGB":
+                return self._rgb_to_nv12(work.to_array()).flatten()
+            if fmt == "BGR":
+                return self._bgr_to_nv12(work.to_array()).flatten()
+            return self._bgr_to_nv12(self.frame_to_bgr(work)).flatten()
+
+        bgr = self.frame_to_bgr(work)
+        return self._prepare_input_from_bgr(bgr, target_w, target_h, input_fmt)
 
     def _run_face_landmarks_bgr(self, bgr: np.ndarray) -> Any:
         return self._run_face_landmarks_impl(bgr)
@@ -2716,7 +2977,7 @@ class ModelShowcase:
                 pad_color, rotate_vertical=rotate_vertical,
             )
             if rec_is_rgb:
-                return cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB).flatten()
+                return np.ascontiguousarray(crop_bgr[:, :, ::-1]).flatten()
             return self._bgr_to_nv12(crop_bgr).flatten()
 
         def _recognize_one(bx: float, by: float, bw: float, bh: float) -> Optional[_OcrLineWrap]:
@@ -2799,16 +3060,8 @@ class ModelShowcase:
         if bgr.shape[1] != tw or bgr.shape[0] != th:
             bgr = cv2.resize(bgr, (tw, th), interpolation=cv2.INTER_LINEAR)
         if stage["input_format"] == "rgb":
-            return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB).flatten()
-        i420 = cv2.cvtColor(bgr, cv2.COLOR_BGR2YUV_I420)
-        h, w = bgr.shape[:2]
-        y_plane = i420[:h, :]
-        u_plane = i420[h:h + h // 4, :].reshape(h // 2, w // 2)
-        v_plane = i420[h + h // 4:, :].reshape(h // 2, w // 2)
-        uv_plane = np.empty((h // 2, w), dtype=np.uint8)
-        uv_plane[:, 0::2] = u_plane
-        uv_plane[:, 1::2] = v_plane
-        return np.vstack([y_plane, uv_plane]).flatten()
+            return np.ascontiguousarray(bgr[:, :, ::-1]).flatten()
+        return ModelShowcase._bgr_to_nv12(bgr).flatten()
 
     @staticmethod
     def _decode_recognition(rec_result: Any, charset: List[str]) -> tuple:
@@ -3084,22 +3337,28 @@ class ModelShowcase:
             return None
         try:
             infer_stream = self._active_infer_stream
-            frame = self.media_infer.get_frame(infer_stream, timeout_ms=3000)
+            frame = self.media_infer.get_frame(
+                infer_stream, timeout_ms=3000, keep_fd=True,
+            )
         except Exception as e:
             logger.warning("Infer get_frame error: %s", e)
             self._reconnect_infer_media()
             return None
         if frame is None:
             return None
-        return self.frame_to_bgr(frame)
+        try:
+            return self.frame_to_bgr(frame)
+        finally:
+            self._release_frame(frame)
 
     def _prepare_input_from_bgr(self, bgr: np.ndarray, target_w: int,
                                  target_h: int, input_fmt: str) -> np.ndarray:
+        input_fmt = (input_fmt or "nv12").lower()
         src_h, src_w = bgr.shape[:2]
         if src_w != target_w or src_h != target_h:
             bgr = cv2.resize(bgr, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
         if input_fmt == "rgb":
-            return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB).flatten()
+            return np.ascontiguousarray(bgr[:, :, ::-1]).flatten()
         return self._bgr_to_nv12(bgr).flatten()
 
     def _infer_loop(self) -> None:
@@ -3145,6 +3404,7 @@ class ModelShowcase:
                                  or self._video_active)
                     raw = None
                     bgr = None  # only set when BGR is actually needed
+                    source_frame = None
 
                     if needs_bgr:
                         # Pipeline / face / video models still use BGR path
@@ -3180,8 +3440,16 @@ class ModelShowcase:
 
                             if raw is not None:
                                 raw_data, src_w, src_h, src_fmt = raw
-                                if src_fmt == "NV12":
-                                    # Best case: direct NV12 input, zero conversion
+                                if hasattr(raw_data, "format") and callable(getattr(raw_data, "release", None)):
+                                    source_frame = raw_data
+                                    # Best case on camera: retained dma-buf source,
+                                    # DSP resize/convert before final tensor bytes.
+                                    t_prep = time.monotonic()
+                                    input_data = self._prepare_input(
+                                        source_frame, target_w, target_h, input_fmt,
+                                    )
+                                    prep_us = int((time.monotonic() - t_prep) * 1_000_000)
+                                elif src_fmt == "NV12":
                                     t_prep = time.monotonic()
                                     input_data = self._prepare_nv12_input(
                                         raw_data, src_w, src_h,
@@ -3196,7 +3464,7 @@ class ModelShowcase:
                                             bgr, target_w, target_h, input_fmt,
                                         )
                                     elif input_fmt == "rgb":
-                                        input_data = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB).flatten()
+                                        input_data = np.ascontiguousarray(bgr[:, :, ::-1]).flatten()
                                     else:
                                         input_data = self._bgr_to_nv12(bgr).flatten()
                                     prep_us = -1  # legacy path
@@ -3277,18 +3545,24 @@ class ModelShowcase:
                                     emb = result.embeddings[0].data
                                     # Get BGR for gallery only when needed
                                     if bgr is None and raw is not None:
-                                        bgr = self._to_bgr(raw_data, src_fmt)
+                                        if source_frame is not None:
+                                            bgr = self.frame_to_bgr(source_frame)
+                                        else:
+                                            bgr = self._to_bgr(raw_data, src_fmt)
                                     if bgr is not None:
-                                        enc_params = [cv2.IMWRITE_JPEG_QUALITY, 85]
-                                        _, jpeg = cv2.imencode(".jpg", bgr, enc_params)
+                                        jpeg = self._encode_bgr_jpeg(bgr, 85)
                                         h, w = bgr.shape[:2]
                                         self.gallery.add_image(
-                                            jpeg.tobytes(), emb,
+                                            jpeg, emb,
                                             int(now * 1000), w, h,
                                         )
                                         self.gallery._last_capture = now
                                 except Exception as gallery_err:
                                     logger.debug("Gallery capture skipped: %s", gallery_err)
+
+                        if source_frame is not None:
+                            self._release_frame(source_frame)
+                            source_frame = None
 
                         prev_failures = self._consecutive_failures
                         self._consecutive_failures = 0
@@ -3311,6 +3585,9 @@ class ModelShowcase:
                             self._infer_fps_last_count = self.infer_count
                             self._infer_fps_last_time = now_fps
                     except Exception as infer_err:
+                        if source_frame is not None:
+                            self._release_frame(source_frame)
+                            source_frame = None
                         # If the loop is shutting down (model switch / app
                         # stop), the in-flight infer failing is expected —
                         # _stop_infer_thread set _infer_running=False before
@@ -3669,11 +3946,12 @@ class ModelShowcase:
 
     def frame_to_bgr(self, frame: Frame) -> np.ndarray:
         if frame.format == "NV12":
-            return cv2.cvtColor(frame.image, cv2.COLOR_YUV2BGR_NV12)
+            arr = frame.to_array()
+            return self._nv12_to_bgr(arr, frame.width, frame.height)
         elif frame.format == "RGB":
-            return cv2.cvtColor(frame.image, cv2.COLOR_RGB2BGR)
+            return np.ascontiguousarray(frame.to_array()[:, :, ::-1])
         elif frame.format == "BGR":
-            return frame.image
+            return frame.to_array()
         else:
             rgb = frame.to_rgb()
             return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
@@ -3810,11 +4088,9 @@ class ModelShowcase:
             max(1, int(round(sf))),
         )
 
-        ok, jpeg = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, 85])
-        if not ok:
-            raise RuntimeError("JPEG encode failed")
+        jpeg = self._encode_bgr_jpeg(bgr, 85)
         return {
-            "jpeg": jpeg.tobytes(),
+            "jpeg": jpeg,
             "infer_time_us": infer_us,
             "hw_infer_time_us": hw_us,
             "model": model_id,
@@ -3845,6 +4121,8 @@ class ModelShowcase:
             _jpeg_sz = 0
             _real_seq = None
             _is_repush = False
+            source_frame = None
+            bgr = None
             if self._video_active:
                 # Video mode: sample the threaded decoder's latest frame. The
                 # decode thread advances the file at playback FPS; this loop and
@@ -3868,7 +4146,9 @@ class ModelShowcase:
                     # (1s timeout ≈ 1 fps during a hiccup). 80ms lets the loop
                     # re-push cached frames at ~12 fps instead of cratering.
                     _p_gf = time.perf_counter()
-                    frame = self.media_preview.get_frame(self.stream_id, timeout_ms=80)
+                    frame = self.media_preview.get_frame(
+                        self.stream_id, timeout_ms=80, keep_fd=True,
+                    )
                     _t_gf = (time.perf_counter() - _p_gf) * 1000.0
                 except Exception as e:
                     logger.warning("Preview frame get error: %s", e, exc_info=True)
@@ -3894,21 +4174,29 @@ class ModelShowcase:
                     # the preview keeps flowing and current_fps stays honest.
                     # Fixes the intermittent linknet/segmentation FPS dips.
                     if self._last_bgr is None:
+                        if self._cached_jpeg and self._output_mode in ("mjpeg", "both"):
+                            now_repush = time.time()
+                            if now_repush - last_frame_time >= (1.0 / self.preview_fps):
+                                last_frame_time = now_repush
+                                fps_counter += 1
+                                if now_repush - fps_start >= 1.0:
+                                    self.current_fps = fps_counter / (now_repush - fps_start)
+                                    fps_counter = 0
+                                    fps_start = now_repush
+                                self.frame_count += 1
+                                self.frame_buffer.update(self._cached_jpeg)
                         continue
                     bgr = self._last_bgr
                     _is_repush = True
                 else:
                     consecutive_none = 0
-                    _p_cv = time.perf_counter()
-                    bgr = self.frame_to_bgr(frame)
-                    _t_cv = (time.perf_counter() - _p_cv) * 1000.0
-                    _real_seq = getattr(frame, "frame_sequence", None)
-                    # Snapshot (copy) so any downstream in-place overlay draw
-                    # on a resized alias never corrupts our cached frame.
-                    self._last_bgr = bgr.copy()
+                    source_frame = frame
+                    _real_seq = getattr(frame, "sequence", getattr(frame, "frame_sequence", None))
 
             now = time.time()
             if now - last_frame_time < (1.0 / self.preview_fps):
+                if source_frame is not None:
+                    self._release_frame(source_frame)
                 continue
             last_frame_time = now
 
@@ -3921,15 +4209,27 @@ class ModelShowcase:
             try:
                 with self._result_lock:
                     result = self._latest_result
-                if self._video_active:
+                is_overlay_type = self.current_model_type in ("segmentation", "depth")
+                needs_bgr = self._video_active or self._rtsp_enabled or is_overlay_type
+                if self._video_active and bgr is not None:
                     bgr = bgr.copy()
+                elif needs_bgr and source_frame is not None:
+                    _p_cv = time.perf_counter()
+                    bgr = self.frame_to_bgr(source_frame)
+                    _t_cv = (time.perf_counter() - _p_cv) * 1000.0
+                    # Snapshot (copy) so downstream in-place overlay draw on a
+                    # resized alias never corrupts our cached repush frame.
+                    self._last_bgr = bgr.copy()
 
                 self.frame_count += 1
                 if self.frame_count == 1:
-                    logger.info("First frame: %dx%d", bgr.shape[1], bgr.shape[0])
+                    if bgr is not None:
+                        logger.info("First frame: %dx%d", bgr.shape[1], bgr.shape[0])
+                    elif source_frame is not None:
+                        logger.info("First frame: %dx%d", source_frame.width, source_frame.height)
 
                 # RTSP: draw overlay server-side, then write
-                if self._rtsp_enabled:
+                if self._rtsp_enabled and bgr is not None:
                     rtsp_bgr = bgr.copy()
                     if result:
                         self.draw_overlay(rtsp_bgr, result)
@@ -3940,101 +4240,117 @@ class ModelShowcase:
                 # but for segmentation/depth we do server-side overlay to show the
                 # colour map in the MJPEG stream too.
                 if self._output_mode in ("mjpeg", "both"):
-                    h, w = bgr.shape[:2]
-                    _p_rz = time.perf_counter()
-                    if (w, h) != (self.preview_width, self.preview_height):
-                        preview_bgr = cv2.resize(
-                            bgr, (self.preview_width, self.preview_height),
-                            interpolation=cv2.INTER_LINEAR,
-                        )
-                    else:
-                        preview_bgr = bgr
-                    _t_rz = (time.perf_counter() - _p_rz) * 1000.0
-
                     _t_ov = 0.0
                     _t_enc = 0.0
                     _t_fb = 0.0
                     _jpeg_sz = 0
-                    is_overlay_type = self.current_model_type in ("segmentation", "depth")
 
-                    if is_overlay_type:
-                        # For seg/depth, only render+encode when a new inference
-                        # result has arrived (since infer FPS << preview FPS).
-                        # Between new results, re-use the cached coloured mask for
-                        # a lightweight foreground-only blend on the fresh camera frame.
-                        new_result = (self.infer_count != self._cached_overlay_infer_count)
-                        now_render = time.time()
-                        # Time-throttle the expensive full render to at most
-                        # 1/_overlay_interval Hz (~10 Hz). seg/depth models infer
-                        # FASTER than the preview loop, so without this cap,
-                        # new_result is True every iteration and we full-render
-                        # every frame (draw_overlay + stats bar + imencode at
-                        # full preview resolution) — pegging python3 and cratering
-                        # stream_fps to ~2 fps (verified: linknet 2.5 vs yolov8n
-                        # 12, same camera path). Between renders we re-push the
-                        # cached JPEG (cheap); ~10 Hz mask refresh is imperceptible.
-                        should_render = (now_render - self._overlay_last_render) >= self._overlay_interval
-                        if new_result and result and should_render:
-                            # Full render: draw the pixel overlay only. Do NOT bake
-                            # draw_stats_bar here — the browser canvas already draws
-                            # a stats bar (drawStatsBar in index.html:689) for every
-                            # model. Baking a second one into the JPEG stacked a
-                            # duplicate bar on seg/depth — the "two layers" seen on
-                            # linknet/scdepth (detection never bakes a server bar, so
-                            # this also makes seg/depth consistent). RTSP (above)
-                            # keeps its bar since it has no overlay canvas.
-                            _p = time.perf_counter()
-                            self.draw_overlay(preview_bgr, result)
-                            _t_ov = (time.perf_counter() - _p) * 1000.0
-                            encode_params = [cv2.IMWRITE_JPEG_QUALITY, 85]
-                            _p = time.perf_counter()
-                            _, jpeg = cv2.imencode(".jpg", preview_bgr, encode_params)
-                            _t_enc = (time.perf_counter() - _p) * 1000.0
-                            _jb = jpeg.tobytes()
-                            _jpeg_sz = len(_jb)
-                            _p = time.perf_counter()
-                            self.frame_buffer.update(_jb)
-                            _t_fb = (time.perf_counter() - _p) * 1000.0
-                            self._cached_jpeg = _jb
-                            self._overlay_last_render = now_render
-                        elif self._cached_jpeg:
-                            # No new result: the coloured mask is unchanged since
-                            # the last full render, so re-push the cached JPEG
-                            # instead of re-blending the (static) mask onto every
-                            # fresh camera frame.  Skipping the per-frame
-                            # addWeighted + full-frame copy + imencode is the main
-                            # CPU win that keeps python3 under one core for
-                            # seg/depth while still streaming at preview FPS.
-                            _jb = self._cached_jpeg
-                            _jpeg_sz = len(_jb)
-                            _p = time.perf_counter()
-                            self.frame_buffer.update(_jb)
-                            _t_fb = (time.perf_counter() - _p) * 1000.0
-                        else:
-                            # First frames, no result yet — show the plain camera
-                            # frame so the preview is not blank before first infer.
-                            encode_params = [cv2.IMWRITE_JPEG_QUALITY, 85]
-                            _p = time.perf_counter()
-                            _, jpeg = cv2.imencode(".jpg", preview_bgr, encode_params)
-                            _t_enc = (time.perf_counter() - _p) * 1000.0
-                            _jb = jpeg.tobytes()
-                            _jpeg_sz = len(_jb)
-                            _p = time.perf_counter()
-                            self.frame_buffer.update(_jb)
-                            _t_fb = (time.perf_counter() - _p) * 1000.0
-                            self._cached_jpeg = _jb
-                    else:
-                        # Non-overlay types: encode every preview frame (browser
-                        # draws overlay via SSE pixel data)
-                        encode_params = [cv2.IMWRITE_JPEG_QUALITY, 85]
+                    if source_frame is not None and not is_overlay_type:
                         _p = time.perf_counter()
-                        _, jpeg = cv2.imencode(".jpg", preview_bgr, encode_params)
+                        _jb = self._encode_preview_frame_hw(source_frame)
                         _t_enc = (time.perf_counter() - _p) * 1000.0
-                        _jb = jpeg.tobytes()
-                        _jpeg_sz = len(_jb)
-                        _p = time.perf_counter()
-                        self.frame_buffer.update(_jb)
-                        _t_fb = (time.perf_counter() - _p) * 1000.0
+                        if _jb:
+                            _jpeg_sz = len(_jb)
+                            _p = time.perf_counter()
+                            self.frame_buffer.update(_jb)
+                            _t_fb = (time.perf_counter() - _p) * 1000.0
+                            self._cached_jpeg = _jb
+
+                    if _jpeg_sz == 0:
+                        if bgr is None and source_frame is not None:
+                            _p_cv = time.perf_counter()
+                            bgr = self.frame_to_bgr(source_frame)
+                            _t_cv = (time.perf_counter() - _p_cv) * 1000.0
+                            self._last_bgr = bgr.copy()
+                        if bgr is None:
+                            continue
+
+                        h, w = bgr.shape[:2]
+                        _p_rz = time.perf_counter()
+                        if (w, h) != (self.preview_width, self.preview_height):
+                            preview_bgr = cv2.resize(
+                                bgr, (self.preview_width, self.preview_height),
+                                interpolation=cv2.INTER_LINEAR,
+                            )
+                        else:
+                            preview_bgr = bgr
+                        _t_rz = (time.perf_counter() - _p_rz) * 1000.0
+
+                        if is_overlay_type:
+                            # For seg/depth, only render+encode when a new inference
+                            # result has arrived (since infer FPS << preview FPS).
+                            # Between new results, re-use the cached coloured mask for
+                            # a lightweight foreground-only blend on the fresh camera frame.
+                            new_result = (self.infer_count != self._cached_overlay_infer_count)
+                            now_render = time.time()
+                            # Time-throttle the expensive full render to at most
+                            # 1/_overlay_interval Hz (~10 Hz). seg/depth models infer
+                            # FASTER than the preview loop, so without this cap,
+                            # new_result is True every iteration and we full-render
+                            # every frame (draw_overlay + stats bar + imencode at
+                            # full preview resolution) — pegging python3 and cratering
+                            # stream_fps to ~2 fps (verified: linknet 2.5 vs yolov8n
+                            # 12, same camera path). Between renders we re-push the
+                            # cached JPEG (cheap); ~10 Hz mask refresh is imperceptible.
+                            should_render = (
+                                now_render - self._overlay_last_render
+                            ) >= self._overlay_interval
+                            if new_result and result and should_render:
+                                # Full render: draw the pixel overlay only. Do NOT bake
+                                # draw_stats_bar here — the browser canvas already draws
+                                # a stats bar (drawStatsBar in index.html:689) for every
+                                # model. Baking a second one into the JPEG stacked a
+                                # duplicate bar on seg/depth — the "two layers" seen on
+                                # linknet/scdepth (detection never bakes a server bar, so
+                                # this also makes seg/depth consistent). RTSP (above)
+                                # keeps its bar since it has no overlay canvas.
+                                _p = time.perf_counter()
+                                self.draw_overlay(preview_bgr, result)
+                                _t_ov = (time.perf_counter() - _p) * 1000.0
+                                _p = time.perf_counter()
+                                _jb = self._encode_bgr_jpeg(preview_bgr, self.jpeg_quality)
+                                _t_enc = (time.perf_counter() - _p) * 1000.0
+                                _jpeg_sz = len(_jb)
+                                _p = time.perf_counter()
+                                self.frame_buffer.update(_jb)
+                                _t_fb = (time.perf_counter() - _p) * 1000.0
+                                self._cached_jpeg = _jb
+                                self._overlay_last_render = now_render
+                            elif self._cached_jpeg:
+                                # No new result: the coloured mask is unchanged since
+                                # the last full render, so re-push the cached JPEG
+                                # instead of re-blending the (static) mask onto every
+                                # fresh camera frame.  Skipping the per-frame
+                                # addWeighted + full-frame copy + imencode is the main
+                                # CPU win that keeps python3 under one core for
+                                # seg/depth while still streaming at preview FPS.
+                                _jb = self._cached_jpeg
+                                _jpeg_sz = len(_jb)
+                                _p = time.perf_counter()
+                                self.frame_buffer.update(_jb)
+                                _t_fb = (time.perf_counter() - _p) * 1000.0
+                            else:
+                                # First frames, no result yet — show the plain camera
+                                # frame so the preview is not blank before first infer.
+                                _p = time.perf_counter()
+                                _jb = self._encode_bgr_jpeg(preview_bgr, self.jpeg_quality)
+                                _t_enc = (time.perf_counter() - _p) * 1000.0
+                                _jpeg_sz = len(_jb)
+                                _p = time.perf_counter()
+                                self.frame_buffer.update(_jb)
+                                _t_fb = (time.perf_counter() - _p) * 1000.0
+                                self._cached_jpeg = _jb
+                        else:
+                            # Non-overlay fallback path: encode every preview frame
+                            # after CPU materialization (browser draws overlay via SSE).
+                            _p = time.perf_counter()
+                            _jb = self._encode_bgr_jpeg(preview_bgr, self.jpeg_quality)
+                            _t_enc = (time.perf_counter() - _p) * 1000.0
+                            _jpeg_sz = len(_jb)
+                            _p = time.perf_counter()
+                            self.frame_buffer.update(_jb)
+                            _t_fb = (time.perf_counter() - _p) * 1000.0
+                            self._cached_jpeg = _jb
 
                     logger.debug(
                         "PF prof gf=%.1f cv=%.1f rz=%.1f ov=%.1f enc=%.1f fb=%.1f "
@@ -4044,6 +4360,9 @@ class ModelShowcase:
                     )
             except Exception as e:
                 logger.error("Frame processing error (#%d): %s", self.frame_count, e, exc_info=True)
+            finally:
+                if source_frame is not None:
+                    self._release_frame(source_frame)
 
         logger.info("Frame loop stopped after %d frames", self.frame_count)
 
@@ -4338,6 +4657,8 @@ class ModelShowcase:
             self.media_preview.close()
         if self.media_infer:
             self.media_infer.close()
+        self._close_infer_dsp()
+        self._close_preview_dsp()
         if self.infer_client:
             self.infer_client.close()
 
@@ -4896,7 +5217,7 @@ def create_app(showcase: ModelShowcase) -> Flask:
                 arr = np.frombuffer(raw, dtype=np.uint8)
                 bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
                 if bgr is not None:
-                    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+                    rgb = np.ascontiguousarray(bgr[:, :, ::-1])
                     # Resize to VLM expected input shape from model manifest
                     vlm_w = showcase._current_model_info.get("vlm_width", 512)
                     vlm_h = showcase._current_model_info.get("vlm_height", 288)
@@ -5052,7 +5373,7 @@ def create_app(showcase: ModelShowcase) -> Flask:
         lm_info = showcase._current_model_info
         tw, th = lm_info["input_width"], lm_info["input_height"]
         resized = cv2.resize(crop, (tw, th))
-        lm_input = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB).flatten()
+        lm_input = np.ascontiguousarray(resized[:, :, ::-1]).flatten()
         lm_result = showcase.infer_client.infer(lm_input, model_id="face_landmarks", timeout_ms=3000)
 
         raw = getattr(lm_result, "raw_outputs", None)
