@@ -14,6 +14,7 @@ works in a plain unit-test environment.
 from __future__ import annotations
 
 import sys
+import threading
 import types
 from unittest.mock import MagicMock
 
@@ -38,6 +39,7 @@ def _minimal_showcase() -> "main.ModelShowcase":
     sc.current_model = ""
     sc.current_model_type = ""
     sc._current_model_info = None
+    sc._model_lock = threading.Lock()
     sc.infer_client = MagicMock()
     return sc
 
@@ -392,3 +394,83 @@ def test_refresh_model_paths_reports_nothing_new_when_still_missing(tmp_path, mo
     # Act / Assert — no false "added" report
     assert sc.refresh_model_paths() == []
     assert [m["id"] for m in main.AVAILABLE_MODELS] == []
+
+
+def test_refresh_model_paths_reprovisions_pipeline_stages(tmp_path, monkeypatch):
+    # Arrange — device synced only stage files from another unit AFTER this
+    # app started: import-time resolution landed on the (absent) bundled
+    # fallback for both stages, hiding the whole pipeline.
+    host_root = tmp_path / "host"
+    host_root.mkdir()
+    bundled_root = tmp_path / "bundled"
+    bundled_root.mkdir()
+    monkeypatch.setattr(main, "_MODEL_ROOT", str(host_root))
+    monkeypatch.setattr(main, "_BUNDLED_MODEL_ROOT", str(bundled_root))
+    monkeypatch.setattr(main, "MODEL_CATALOG", [
+        {
+            "id": "lpr_pipeline", "type": "pipeline_lpr", "name": "LPR",
+            "stages": [
+                {"id": "license_plate_det", "category": "detection",
+                 "path": main._model_path("detection", "tiny_yolov4_license_plates.hef"),
+                 "type": "detection"},
+                {"id": "lprnet", "category": "ocr",
+                 "path": main._model_path("ocr", "lprnet.hef"),
+                 "type": "ocr_recognition"},
+            ],
+        },
+    ])
+    sc = _minimal_showcase()
+    sc._discover_models()
+    assert main.AVAILABLE_MODELS == []  # both stages fell back to bundled, absent
+
+    # Act — operator drops both stage files into the host store, hits refresh
+    host_det = host_root / "detection" / "tiny_yolov4_license_plates.hef"
+    host_det.parent.mkdir(parents=True)
+    host_det.write_bytes(b"det")
+    host_ocr = host_root / "ocr" / "lprnet.hef"
+    host_ocr.parent.mkdir(parents=True)
+    host_ocr.write_bytes(b"ocr")
+    added = sc.refresh_model_paths()
+
+    # Assert — pipeline became available via re-resolved HOST stage paths
+    assert added == ["lpr_pipeline"]
+    pipeline = main.AVAILABLE_MODELS[0]
+    assert [s["path"] for s in pipeline["stages"]] == [str(host_det), str(host_ocr)]
+
+
+def test_refresh_model_paths_reseeds_pin_set_with_stages(tmp_path, monkeypatch):
+    # Arrange — current model IS the pipeline; refresh must (re)seed the
+    # reaper pin set so the freshly re-resolved stages are never evicted
+    host_root = tmp_path / "host"
+    (host_root / "detection").mkdir(parents=True)
+    (host_root / "ocr").mkdir(parents=True)
+    host_det = host_root / "detection" / "tiny_yolov4_license_plates.hef"
+    host_det.write_bytes(b"det")
+    host_ocr = host_root / "ocr" / "lprnet.hef"
+    host_ocr.write_bytes(b"ocr")
+    bundled_root = tmp_path / "bundled"
+    bundled_root.mkdir()
+    monkeypatch.setattr(main, "_MODEL_ROOT", str(host_root))
+    monkeypatch.setattr(main, "_BUNDLED_MODEL_ROOT", str(bundled_root))
+    monkeypatch.setattr(main, "MODEL_CATALOG", [
+        {
+            "id": "lpr_pipeline", "type": "pipeline_lpr", "name": "LPR",
+            "stages": [
+                {"id": "license_plate_det", "category": "detection",
+                 "path": str(host_det), "type": "detection"},
+                {"id": "lprnet", "category": "ocr",
+                 "path": str(host_ocr), "type": "ocr_recognition"},
+            ],
+        },
+    ])
+    sc = _minimal_showcase()
+    sc._pinned_models = {"stale_model_from_previous_switch"}
+    sc._discover_models()
+    assert sc.current_model == "lpr_pipeline"
+
+    # Act
+    sc.refresh_model_paths()
+
+    # Assert — pins are REPLACED with exactly the current model's set:
+    # pipeline id + both stage ids, and nothing stale survives
+    assert sc._pinned_models == {"lpr_pipeline", "license_plate_det", "lprnet"}
