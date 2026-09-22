@@ -7,13 +7,13 @@ kind: Application
 metadata:
   id: parking_lot
   name: Parking Lot Full Element Extraction
-  version: 1.2.3
+  version: 1.2.5
   description: "Parking-lot element extraction with vehicle attributes, depth anti-spoofing, and plate OCR."
   author: NeoRuntime Team
   email: opensource@camthink.ai
 
 spec:
-  image: neoruntime/parking-lot:1.2.3
+  image: neoruntime/parking-lot:1.2.5
 
   resources:
     cpu: "200%"
@@ -113,19 +113,34 @@ spec:
     # for on-device A/B comparisons.
     - name: PARKING_LOT_DSP
       value: "1"
+    # 1.2.5 plate-quality knobs (defaults live in parking_lot/config.py; these
+    # env entries document the tunables — override here to change behavior):
+    #   PLATE_MIN_AREA (0.001)   min normalized candidate area before OCR
+    #   PLATE_MAX_PER_FRAME (8)  per-frame OCR batch cap
+    #   PLATE_REQUIRE_IN_VEHICLE (1)  plate must sit in a vehicle box / ROI
+    #   PLATE_ROI ("")           optional "x,y,w,h" normalized fallback region
+    #   PLATE_TRACK_IOU (0.25)   IoU match threshold between frames
+    #   PLATE_CONFIRM_FRAMES (2) consistent votes before a plate is emitted
+    #   PLATE_VOTE_WINDOW (5)    per-track rolling vote window
+    #   PLATE_MIN_VOTE_CONF (0.7) min OCR conf to count as a vote
+    #   PLATE_TRACK_TTL_S (2.0)  unmatched-track expiry
+    #   PLATE_EMIT_TTL_S (30.0)  event/snapshot re-emit gap per track
     - name: LOG_LEVEL
       value: "info"
-    # HD 1080P MSE preview reuses platform-api's hardware H.264 stream
-    # (ws://<lan-ip>:<port>/api/v1/h264/main). Default 8080 = platform-api
-    # http_addr (configs/platform-api.yaml). Set HD_PREVIEW_ENABLED=0 to fall
-    # back to MJPEG. If platform-api enables token auth, inject PLATFORM_API_TOKEN
-    # at runtime (never commit a real token here). NOTE (93.72, 2026-09-22):
-    # this stack's app-manager does NOT inject spec.env into the container, so
-    # the token never reaches the page and the h264 ws returns 401 — since
-    # 1.2.3 the page proves the HD stream before switching and falls back to
-    # the MJPEG preview (with a badge) instead of showing a black screen.
+    # HD 1080P MSE preview reuses platform-api's hardware H.264 stream. The
+    # browser connects via the web console's nginx (wss://<lan-ip>:443, which
+    # proxies /api/ to platform-api) — gym-ops' proven route; platform-api's
+    # own http_addr is loopback-only, so ws://<lan-ip>:8080 is TCP-refused
+    # from the LAN (root cause of the 1.2.3 black-screen fallback). Override
+    # PLATFORM_API_WS_SCHEME/PLATFORM_API_PORT on stacks without the console
+    # proxy; set HD_PREVIEW_ENABLED=0 to stay on MJPEG. ${AIPC_TOKEN_KEY} is
+    # expanded by app-manager at install time (verified on 93.72 via
+    # /proc/<pid>/environ); stacks that leave it unexpanded make the page
+    # report HD disabled and keep MJPEG.
+    - name: PLATFORM_API_WS_SCHEME
+      value: "wss"
     - name: PLATFORM_API_PORT
-      value: "8080"
+      value: "443"
     - name: HD_PREVIEW_ENABLED
       value: "1"
     - name: PLATFORM_API_TOKEN

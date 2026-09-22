@@ -54,41 +54,85 @@ DSP_QUOTA_COOLDOWN_S = float(os.environ.get("PARKING_LOT_DSP_COOLDOWN", "10"))
 # ---------------------------------------------------------------------------
 # Character set for license plate OCR (CTC decoder)
 # PaddleOCR v5 dictionary — loaded from ppocrv5_dict.txt bundled with the app.
-# Layout: dict_chars + space + CTC_blank.  Blank is at the LAST index.
+# Layout (PaddleOCR CTCLabelDecode with use_space_char=True):
+#   index 0          : CTC blank token (placeholder "" — never emitted)
+#   index 1 .. N     : dict chars
+#   index N+1 (last) : space character
+# Matches PaddleOCR's ["blank"] + dict + [" "] and model-showcase's loader.
+# The previous layout put blank LAST, shifting every class by one on the
+# raw-output decode path (blank 0 read as the dict's first char U+3000).
 # ---------------------------------------------------------------------------
 
 _PPOCRV5_DICT_PATH = os.path.join(os.path.dirname(__file__), "ppocrv5_dict.txt")
 
 
 def _load_ppocrv5_charset() -> List[str]:
-    """Load PaddleOCR v5 dictionary as a list of character tokens.
+    """Load the FULL PaddleOCR v5 decode table: [blank] + dict + [space].
 
-    PaddleOCR uses: dict characters (N) + optional space + CTC blank at end.
-    With use_space_char=True (default), the layout is:
-        index 0 .. N-1    : dict chars
-        index N           : space character (" ")
-        index N+1         : CTC blank  (not included in charset;
-                          passed separately to ctc_greedy_decode)
-
+    The blank slot holds "" and is never emitted — the decoder skips it.
     IMPORTANT: We return a **list** (not a string) because some dict entries
     are multi-codepoint characters (e.g. flag emojis like 🇩🇪).  Using a
     string would break the 1:1 index mapping that CTC decoding relies on,
     since Python string indexing operates on code points, not graphemes.
     """
     if not os.path.isfile(_PPOCRV5_DICT_PATH):
-        return list("0123456789ABCDEFGHJKLMNPQRSTUVWXYZ") + [" "]
+        return [""] + list("0123456789ABCDEFGHJKLMNPQRSTUVWXYZ") + [" "]
     with open(_PPOCRV5_DICT_PATH, "r", encoding="utf-8") as f:
         # NOTE: use rstrip("\n") only — Python's strip() removes U+3000
         # (full-width space) which is a valid dict character, causing a
         # charset-length mismatch vs the model's output dimensionality.
         chars = [line.rstrip("\n") for line in f if line.rstrip("\n")]
-    return chars + [" "]
+    return [""] + chars + [" "]
 
 
 LPR_CHARSET: List[str] = _load_ppocrv5_charset()
 
-# PaddleOCR v5: CTC blank token is at the LAST index (len(charset)).
-LPR_CTC_BLANK = len(LPR_CHARSET)
+# PaddleOCR v5: CTC blank token is at index 0 (prepended by CTCLabelDecode).
+LPR_CTC_BLANK = 0
+
+# ---------------------------------------------------------------------------
+# Plate candidate gating & tracking
+# Real-lot scenes light up dozens of low-quality plate candidates (grilles,
+# bumper stripes on distant cars); every candidate costs an OCR RPC, and the
+# old single global vote window let different plates pollute each other's
+# readings. These knobs gate candidates BEFORE OCR and smooth readings
+# per-track (IoU-matched) instead of globally.
+# ---------------------------------------------------------------------------
+
+# Minimum normalized candidate area (w*h). 0.001 ≈ a 100x20 px plate at
+# 1080p — far-field specks below that never OCR usefully.
+PLATE_MIN_AREA = float(os.environ.get("PLATE_MIN_AREA", "0.001"))
+# Per-frame OCR batch cap; candidates arrive detection-confidence-sorted.
+PLATE_MAX_PER_FRAME = int(os.environ.get("PLATE_MAX_PER_FRAME", "8"))
+# Require the plate center to sit inside a vehicle box (or PLATE_ROI).
+PLATE_REQUIRE_IN_VEHICLE = os.environ.get(
+    "PLATE_REQUIRE_IN_VEHICLE", "1",
+).strip().lower() not in ("0", "false", "off")
+
+
+def _parse_roi(raw: str) -> "Tuple[float, float, float, float] | None":
+    parts = [p for p in raw.replace(";", ",").split(",") if p.strip()]
+    if len(parts) != 4:
+        return None
+    try:
+        x, y, w, h = (float(p) for p in parts)
+    except ValueError:
+        return None
+    return (x, y, w, h) if w > 0 and h > 0 else None
+
+
+# Optional normalized "x,y,w,h" region: plates outside every vehicle box are
+# still accepted inside this ROI (e.g. a gate camera that crops vehicles).
+PLATE_ROI = _parse_roi(os.environ.get("PLATE_ROI", ""))
+
+# IoU tracker knobs: match threshold, votes to confirm/correct a text, vote
+# window, minimum OCR conf to count a vote, track expiry, event re-emit gap.
+PLATE_TRACK_IOU = float(os.environ.get("PLATE_TRACK_IOU", "0.25"))
+PLATE_CONFIRM_FRAMES = int(os.environ.get("PLATE_CONFIRM_FRAMES", "2"))
+PLATE_VOTE_WINDOW = int(os.environ.get("PLATE_VOTE_WINDOW", "5"))
+PLATE_MIN_VOTE_CONF = float(os.environ.get("PLATE_MIN_VOTE_CONF", "0.7"))
+PLATE_TRACK_TTL_S = float(os.environ.get("PLATE_TRACK_TTL_S", "2.0"))
+PLATE_EMIT_TTL_S = float(os.environ.get("PLATE_EMIT_TTL_S", "30.0"))
 
 # ---------------------------------------------------------------------------
 # COCO vehicle class mapping (used by yolov5m_vehicles)
