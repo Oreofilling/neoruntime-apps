@@ -7,13 +7,13 @@ kind: Application
 metadata:
   id: parking_lot
   name: Parking Lot Full Element Extraction
-  version: 1.2.2
+  version: 1.2.3
   description: "Parking-lot element extraction with vehicle attributes, depth anti-spoofing, and plate OCR."
   author: NeoRuntime Team
   email: opensource@camthink.ai
 
 spec:
-  image: neoruntime/parking-lot:1.2.2
+  image: neoruntime/parking-lot:1.2.3
 
   resources:
     cpu: "200%"
@@ -119,7 +119,11 @@ spec:
     # (ws://<lan-ip>:<port>/api/v1/h264/main). Default 8080 = platform-api
     # http_addr (configs/platform-api.yaml). Set HD_PREVIEW_ENABLED=0 to fall
     # back to MJPEG. If platform-api enables token auth, inject PLATFORM_API_TOKEN
-    # at runtime (never commit a real token here).
+    # at runtime (never commit a real token here). NOTE (93.72, 2026-09-22):
+    # this stack's app-manager does NOT inject spec.env into the container, so
+    # the token never reaches the page and the h264 ws returns 401 — since
+    # 1.2.3 the page proves the HD stream before switching and falls back to
+    # the MJPEG preview (with a badge) instead of showing a black screen.
     - name: PLATFORM_API_PORT
       value: "8080"
     - name: HD_PREVIEW_ENABLED
