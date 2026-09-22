@@ -7,13 +7,13 @@ kind: Application
 metadata:
   id: parking_lot
   name: Parking Lot Full Element Extraction
-  version: 1.2.1
+  version: 1.2.2
   description: "Parking-lot element extraction with vehicle attributes, depth anti-spoofing, and plate OCR."
   author: NeoRuntime Team
   email: opensource@camthink.ai
 
 spec:
-  image: neoruntime/parking-lot:1.2.1
+  image: neoruntime/parking-lot:1.2.2
 
   resources:
     cpu: "200%"
@@ -25,19 +25,27 @@ spec:
   # exists on the device the platform copy wins and the bundle is only hash
   # compared; on a fresh device app-manager unpacks the package into a
   # transient registration whose mode comes from the package metadata:
-  # yolov5m_vehicles pins its custom postprocess_profile (yolov5m_vehicles)
-  # in the package config so the preload smoke probe and the registration
-  # route through the matching NMS backend; license_plate_det registers raw
-  # (the app decodes the yolov4 grid itself — the default detection profile
-  # pinned in its package config is ignored on the raw path);
-  # plate_recognition registers ocr_recognition. The app's startup
-  # registration then accepts a correctly-configured incumbent and only
-  # force-replaces a mis-configured one (e.g. a device row created before
-  # the custom profile existed) — see parking_lot/app.py register_models.
+  # yolov8n_vehicle_det (since 1.2.2, replaces yolov5m_vehicles as the
+  # vehicle detector — 640x384 NV12 input, ~38ms/frame vs ~1.2s for the
+  # 1080p RGB chain) pins the hailo_yolov8n_384_640 postprocess profile
+  # whose default hailo_yolov8n backend matches this HEF's NMS tensor, so
+  # the preload registration is already correct and the app's startup
+  # registration keeps it (only re-applying its variant blob would change
+  # thresholds; a mis-configured incumbent is still force-replaced — see
+  # parking_lot/app.py register_models);
+  # license_plate_det registers raw (the app decodes the yolov4 grid
+  # itself — the default detection profile pinned in its package config
+  # is ignored on the raw path); plate_recognition registers
+  # ocr_recognition.
+  # yolov5m_vehicles is gone from spec.models AND permissions on purpose:
+  # preload walks permissions.inference.models and would 6002-fail on
+  # fresh devices for an id with neither a platform row nor a bundle.
+  # Its .hef stays vendored in the image and MODEL_DEFS keeps the entry,
+  # so switching back for an A/B only needs the device row + permission.
   models:
     vehicle:
-      id: yolov5m_vehicles
-      path: /opt/aipc/models/yolov5m_vehicles.bin
+      id: yolov8n_vehicle_det
+      path: /opt/aipc/models/yolov8n_vehicle_det.bin
       required: true
     depth:
       id: scdepthv3
@@ -58,7 +66,7 @@ spec:
 
     inference:
       models:
-        - yolov5m_vehicles
+        - yolov8n_vehicle_det
         - scdepthv3
         - license_plate_det
         - plate_recognition
@@ -91,7 +99,7 @@ spec:
     - name: TARGET_FPS
       value: "20"
     - name: VEHICLE_MODEL
-      value: "yolov5m_vehicles"
+      value: "yolov8n_vehicle_det"
     - name: DEPTH_MODEL
       value: "scdepthv3"
     - name: PLATE_DET_MODEL

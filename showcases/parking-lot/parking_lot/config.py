@@ -106,12 +106,49 @@ _COCO_VEHICLE_CLASSES: Dict[int, str] = {
 # ---------------------------------------------------------------------------
 
 MODEL_DEFS = {
+    # 5-class security YOLOv8n (640x384 NV12) — the vehicle detector since
+    # 1.2.2. Replaces yolov5m_vehicles (1920x1080 RGB) as the default: the
+    # yolov8n path skips the NV12->BGR->RGB 1080p conversion and runs the
+    # whole-frame input at ~38ms vs ~1.2s for the yolov5m chain (93.72
+    # probe, 2026-09-22). Class table per the sidecar
+    # hailo_yolov8n_384_640.json: 1=person, 2=vehicle, 3=face,
+    # 4=license_plate (label_offset 1) — hence vehicle_class_ids=(2,).
+    "yolov8n_vehicle_det": {
+        "path": _model_path("detection", "hailo_yolov8n_384_640.hef"),
+        "type": "detection",
+        "input_format": "nv12",
+        "input_width": 640,
+        "input_height": 384,
+        # register_type "detection" keeps ai-runtime's init_post_process
+        # active so the variant config_json below is applied verbatim.
+        "register_type": "detection",
+        # backend_function must be the generic yolov8n loader (the
+        # hailo_yolov8n_384_640 profile name is NOT a known detection
+        # backend — ai-runtime enumerates: hailo_yolov8n, hailo_yolov8s,
+        # hailo_yolov8m, yolov5m_vehicles).
+        "expected_backend": "hailo_yolov8n",
+        "variant": json.dumps({
+            "backend_function": "hailo_yolov8n",
+            "iou_threshold": 0.45,
+            "detection_threshold": 0.30,
+            "output_activation": "none",
+            "label_offset": 1,
+            "max_boxes": 100,
+            "labels": ["unlabeled", "person", "vehicle", "face", "license_plate"],
+        }),
+        # Multi-class model: the parse paths keep only class 2 (vehicle)
+        # and drop person/face/plate boxes. Absent for single-class
+        # models (yolov5m_vehicles) where every box is a vehicle.
+        "vehicle_class_ids": (2,),
+    },
+    # Legacy 1080p vehicle detector, kept for A/B via VEHICLE_MODEL=yolov5m_vehicles.
     "yolov5m_vehicles": {
         "path": _model_path("detection", "yolov5m_vehicles.hef"),
         "type": "detection",
         "input_format": "rgb",
         "input_width": 1920,
         "input_height": 1080,
+        "expected_backend": "yolov5m_vehicles",
         # register_type MUST be non-empty ("detection") so ai-runtime's
         # init_post_process runs (grpc_service.cpp gate) and applies the
         # variant config_json below. An empty register_type skips postprocess

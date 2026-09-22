@@ -1,22 +1,32 @@
 # Models fetched by scripts/fetch_models.sh (zoo compile pinned by sha256).
 # Vendored files in this directory (no rows here) are exact device artifacts
 # committed via the .gitignore negation:
-#   - yolov5m_vehicles.hef — custom 1-class compile (variant-coupled NMS;
-#     the generic zoo yolov5m would mismatch the postprocess config)
+#   - hailo_yolov8n_384_640.hef — 5-class security compile (sidecar
+#     hailo_yolov8n_384_640.json: unlabeled/person/vehicle/face/
+#     license_plate, label_offset 1) as shipped on the devices; the zoo
+#     compile of the same name is NOT the same artifact, so it is vendored
+#     - exact bytes probed on 93.72 2026-09-22 (parking-lot scenes: 8-21
+#     vehicle boxes @0.3-0.79 conf, ~38ms/frame)
+#   - yolov5m_vehicles.hef — legacy 1-class 1080p compile (variant-coupled
+#     NMS; the generic zoo yolov5m would mismatch the postprocess config);
+#     vehicle detector through 1.2.1, kept vendored for device-side A/B
 #   - tiny_yolov4_license_plates.hef — license-plate detector, no zoo build
 #   - paddle_ocr_v5_mobile_recognition_nv12.hef — plate OCR, no zoo build
-#   - yolov5m_vehicles.bin / scdepthv3.bin / license_plate_det.bin /
+#   - yolov8n_vehicle_det.bin / scdepthv3.bin / license_plate_det.bin /
 #     plate_recognition.bin — AMPK packages (app.yaml spec.models paths)
 #     exported from the platform model rows via platform-api
 #     `GET /api/v1/ai/models/:model_id/export`; the embedded HEF bytes are
-#     identical to the vendored .hef above/below, so the packages stay in
-#     sync with the artifacts the app registers at runtime. Regenerate
-#     after replacing any .hef (the package metadata pins the HEF sha256).
-#     yolov5m_vehicles.bin pins the custom yolov5m_vehicles
-#     postprocess_profile in its config (preloads route through the
-#     matching NMS backend). license_plate_det.bin exports output_mode
-#     raw — the app decodes the yolov4 grid itself, and the default
-#     detection profile pinned in its package config is inert on that path.
+#     identical to the vendored .hef above, so the packages stay in sync
+#     with the artifacts the app registers at runtime. Regenerate after
+#     replacing any .hef (the package metadata pins the HEF sha256).
+#     yolov8n_vehicle_det.bin pins the hailo_yolov8n_384_640
+#     postprocess_profile whose default hailo_yolov8n backend matches the
+#     HEF's NMS tensor, so preloads already route correctly.
+#     license_plate_det.bin exports output_mode raw — the app decodes the
+#     yolov4 grid itself, and the default detection profile pinned in its
+#     package config is inert on that path. yolov5m_vehicles.bin was
+#     dropped in 1.2.2 together with its spec.models/permissions entries
+#     (preload walks permissions and would 6002 on fresh devices).
 # Zoo pinning rationale: v5.3.0/hailo15h matches the device firmware
 # (HailoRT 5.3.0). Re-verify with `hailortcli parse-hef` before bumping.
 0c7c7e5958e75f722bd3355106dba21d2c13f737dab3f627701844b34ed9f7e7	scdepthv3.hef	https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/v5.3.0/hailo15h/scdepthv3.hef

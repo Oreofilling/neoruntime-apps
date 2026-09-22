@@ -701,23 +701,41 @@ class ParkingLotApp:
         logger.info("Infer stream selected: %s (available=%s)", chosen, available)
         return chosen
 
+    @staticmethod
+    def _vehicle_boxes_from_objects(
+        objects: Any, mdef: Dict[str, Any],
+    ) -> List[VehicleDetection]:
+        """Filter raw detection objects down to vehicle boxes.
+
+        Single-class models (yolov5m_vehicles) emit only vehicles, so
+        every box passes. Multi-class models declare vehicle_class_ids
+        (the 5-class security yolov8n: 2=vehicle among
+        person/face/plate) and non-vehicle boxes are dropped here —
+        without this filter the class_name fallback would mislabel
+        person boxes as vehicles.
+        """
+        allowed = mdef.get("vehicle_class_ids")
+        vehicles = []
+        for obj in objects:
+            class_id = int(getattr(obj, "class_id", 0))
+            if allowed is not None and class_id not in allowed:
+                continue
+            vehicles.append(VehicleDetection(
+                bbox=(float(obj.bbox.x), float(obj.bbox.y),
+                      float(obj.bbox.width), float(obj.bbox.height)),
+                class_id=class_id,
+                class_name=_COCO_VEHICLE_CLASSES.get(class_id, "vehicle"),
+                confidence=float(obj.score),
+            ))
+        return vehicles
+
     def _detect_vehicles(self, bgr: np.ndarray) -> List[VehicleDetection]:
         model_id = VEHICLE_MODEL
         mdef = MODEL_DEFS[model_id]
         inp = prepare_input(bgr, mdef["input_width"], mdef["input_height"], mdef["input_format"])
         result = self.infer_client.infer(inp, model_id=model_id, timeout_ms=5000)
         if result.objects:
-            vehicles = []
-            for obj in result.objects:
-                cls_name = _COCO_VEHICLE_CLASSES.get(getattr(obj, "class_id", 0), "vehicle")
-                vehicles.append(VehicleDetection(
-                    bbox=(float(obj.bbox.x), float(obj.bbox.y),
-                          float(obj.bbox.width), float(obj.bbox.height)),
-                    class_id=getattr(obj, "class_id", 0),
-                    class_name=cls_name,
-                    confidence=float(obj.score),
-                ))
-            return vehicles
+            return self._vehicle_boxes_from_objects(result.objects, mdef)
         if getattr(result, "raw_outputs", None):
             return parse_nms_raw(result)
         return []
@@ -958,16 +976,8 @@ class ParkingLotApp:
         if vehicle_result is not None:
             try:
                 if vehicle_result.objects:
-                    for obj in vehicle_result.objects:
-                        cls_name = _COCO_VEHICLE_CLASSES.get(
-                            getattr(obj, "class_id", 0), "vehicle")
-                        vehicles.append(VehicleDetection(
-                            bbox=(float(obj.bbox.x), float(obj.bbox.y),
-                                  float(obj.bbox.width), float(obj.bbox.height)),
-                            class_id=getattr(obj, "class_id", 0),
-                            class_name=cls_name,
-                            confidence=float(obj.score),
-                        ))
+                    vehicles = self._vehicle_boxes_from_objects(
+                        vehicle_result.objects, MODEL_DEFS[VEHICLE_MODEL])
                 elif getattr(vehicle_result, "raw_outputs", None):
                     vehicles = parse_nms_raw(vehicle_result)
             except Exception as exc:

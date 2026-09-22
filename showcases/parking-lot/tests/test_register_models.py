@@ -103,6 +103,80 @@ def test_register_one_keeps_correct_incumbent_without_eviction():
     app.infer_client.unregister_model.assert_not_called()
 
 
+def test_register_one_keeps_preloaded_yolov8n_incumbent():
+    # Arrange — 1.2.2 vehicle model: the preload composes the platform
+    # profile (default hailo_yolov8n backend) which already routes this
+    # HEF's NMS tensor correctly; the refusal must keep it as-is
+    app = make_app()
+    app.infer_client.register_model.side_effect = Exception(_refusal("hailo_yolov8n"))
+
+    # Act
+    app._register_one("yolov8n_vehicle_det", MODEL_DEFS["yolov8n_vehicle_det"])
+
+    # Assert
+    assert app.infer_client.register_model.call_count == 1
+    app.infer_client.unregister_model.assert_not_called()
+
+
+def test_register_one_replaces_yolov8n_incumbent_on_wrong_backend():
+    # Arrange — a stale incumbent routes the 5-class HEF through the
+    # yolov5m_vehicles backend (tensor mismatch) -> force-drop + re-register
+    app = make_app()
+    app.infer_client.register_model.side_effect = [
+        Exception(_refusal("yolov5m_vehicles")),
+        None,
+    ]
+
+    # Act
+    app._register_one("yolov8n_vehicle_det", MODEL_DEFS["yolov8n_vehicle_det"])
+
+    # Assert
+    app.infer_client.unregister_model.assert_called_once_with(
+        model_id="yolov8n_vehicle_det")
+    rerun = app.infer_client.register_model.call_args_list[1]
+    assert rerun.kwargs["model_variant"] == MODEL_DEFS["yolov8n_vehicle_det"]["variant"]
+
+
+# --- _vehicle_boxes_from_objects class filtering ------------------------------
+
+def _obj(class_id: int, score: float = 0.8):
+    """Minimal detected-object stand-in for the parse path."""
+    return SimpleNamespace(
+        class_id=class_id, score=score,
+        bbox=SimpleNamespace(x=0.1, y=0.2, width=0.3, height=0.4),
+    )
+
+
+def test_vehicle_boxes_filter_drops_non_vehicle_classes():
+    # Arrange — 5-class model: person(1)/face(3)/plate(4) boxes arrive with
+    # the vehicle(2) ones
+    mdef = MODEL_DEFS["yolov8n_vehicle_det"]
+
+    # Act
+    vehicles = ParkingLotApp._vehicle_boxes_from_objects(
+        [_obj(1), _obj(2), _obj(3), _obj(4), _obj(2, 0.55)], mdef)
+
+    # Assert — only class 2 survives; COCO table names it "car"
+    assert [v.class_id for v in vehicles] == [2, 2]
+    assert all(v.class_name == "car" for v in vehicles)
+    assert vehicles[0].confidence == 0.8
+    assert vehicles[0].bbox == (0.1, 0.2, 0.3, 0.4)
+
+
+def test_vehicle_boxes_pass_all_for_single_class_model():
+    # Arrange — yolov5m_vehicles declares no vehicle_class_ids: every box
+    # is a vehicle (class 0 falls to the "vehicle" fallback name)
+    mdef = MODEL_DEFS["yolov5m_vehicles"]
+
+    # Act
+    vehicles = ParkingLotApp._vehicle_boxes_from_objects(
+        [_obj(0), _obj(1)], mdef)
+
+    # Assert
+    assert [v.class_id for v in vehicles] == [0, 1]
+    assert all(v.class_name == "vehicle" for v in vehicles)
+
+
 def test_register_one_replaces_misconfigured_incumbent():
     # Arrange — platform row predates the custom profile, so the incumbent
     # routes through the default yolov8 backend (tensor mismatch trap)
@@ -136,20 +210,30 @@ def test_register_one_propagates_non_conflict_failures():
 # --- register_models orchestration -------------------------------------------
 
 def test_register_models_skips_registered_models_without_variant():
-    # Arrange — everything except the variant-carrying model is resident
+    # Arrange — everything except the variant-carrying models is resident;
+    # each refusal names the backend that model expects, so both incumbents
+    # are kept without eviction
     resident = [SimpleNamespace(model_id=m) for m in
                 ("scdepthv3", "license_plate_det", "plate_recognition")]
+
+    def refusal_for(model_id):
+        backend = (MODEL_DEFS[model_id].get("expected_backend")
+                   or model_id)
+        return Exception(_refusal(backend))
+
     app = make_app()
     app.infer_client.list_models.return_value = resident
-    app.infer_client.register_model.side_effect = Exception(_refusal("yolov5m_vehicles"))
+    app.infer_client.register_model.side_effect = (
+        lambda **kw: refusal_for(kw["model_id"]))
 
     # Act
     app.register_models()
 
-    # Assert — only the variant model talked to the runtime, incumbent kept
+    # Assert — only the variant-carrying models talked to the runtime
+    # (dict order: yolov8n_vehicle_det first since 1.2.2), incumbents kept
     registered_ids = [c.kwargs["model_id"]
                       for c in app.infer_client.register_model.call_args_list]
-    assert registered_ids == ["yolov5m_vehicles"]
+    assert registered_ids == ["yolov8n_vehicle_det", "yolov5m_vehicles"]
     app.infer_client.unregister_model.assert_not_called()
 
 
