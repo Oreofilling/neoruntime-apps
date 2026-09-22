@@ -8,6 +8,7 @@ rendering) and the top-level entry point.
 import json
 import logging
 import os
+import re
 import signal
 import sys
 import threading
@@ -70,6 +71,33 @@ from .postprocess import (
 from .web import FrameBuffer, create_flask_app, sse_broadcast
 
 logger = logging.getLogger("parking-lot")
+
+
+# ai-runtime refuses a same-id re-registration whose variant differs and
+# embeds the incumbent config in the refusal text:
+#   "model id 'X' is already registered with a different configuration
+#    (type='detection' variant='{"backend_function": ...}')"
+_INCUMBENT_VARIANT_RE = re.compile(r"variant='(\{.*?\})'")
+
+
+def _incumbent_uses_backend(err_msg: str, backend: str) -> bool:
+    """True when a registration-refusal message shows the incumbent variant
+    already routes through ``backend``.
+
+    Used by the startup registration to accept an app-manager preload whose
+    variant differs from ours only in advisory fields (composed label table,
+    thresholds) — evicting a working registration over those would tear down
+    in-flight sessions for nothing. Parse failures read as "not ours" so the
+    caller falls through to the replace path.
+    """
+    match = _INCUMBENT_VARIANT_RE.search(err_msg)
+    if not match:
+        return False
+    try:
+        incumbent = json.loads(match.group(1))
+    except ValueError:
+        return False
+    return incumbent.get("backend_function") == backend
 
 
 # ---------------------------------------------------------------------------
@@ -253,6 +281,64 @@ class ParkingLotApp:
             "last_error": "",
         }
 
+    def _register_one(self, model_id: str, mdef: Dict[str, Any]) -> None:
+        """Register one model, tolerating an existing incumbent registration.
+
+        app-manager preloads manifest-declared models at app start with a
+        platform-composed variant that differs textually from ours (composed
+        label table), and ai-runtime refuses a same-id re-registration with
+        a different config. So when the refusal shows the incumbent already
+        routes through our backend_function (``expected_backend``), keep it;
+        when the incumbent is mis-configured — e.g. a platform row created
+        before the custom postprocess profile existed, leaving the default
+        hailo_yolov8n backend (wrong NMS tensor name → postprocess throws) —
+        force-drop it and re-apply our variant blob (empty-owner unregister
+        is ai-runtime's system-level unload).
+        """
+        reg_type = mdef.get("register_type", mdef["type"])
+        variant = mdef.get("variant")
+        expected_backend = mdef.get("expected_backend")
+        try:
+            self.infer_client.register_model(
+                model_path=mdef["path"],
+                model_id=model_id,
+                owner_id=Config.get_app_id(),
+                model_type=reg_type,
+                model_variant=variant,
+            )
+            logger.info(
+                "Registered model: %s (type=%s, variant=%s)",
+                model_id, reg_type or "raw", variant or "-",
+            )
+            return
+        except Exception as e:
+            msg = str(e)
+            if not (expected_backend and "already registered" in msg):
+                raise
+            if _incumbent_uses_backend(msg, expected_backend):
+                logger.info(
+                    "Keeping existing registration for %s "
+                    "(backend_function=%s already active)",
+                    model_id, expected_backend,
+                )
+                return
+            logger.warning(
+                "Replacing mis-configured registration for %s: %s",
+                model_id, msg,
+            )
+            self.infer_client.unregister_model(model_id=model_id)
+            self.infer_client.register_model(
+                model_path=mdef["path"],
+                model_id=model_id,
+                owner_id=Config.get_app_id(),
+                model_type=reg_type,
+                model_variant=variant,
+            )
+            logger.info(
+                "Re-registered model: %s (type=%s, variant=%s)",
+                model_id, reg_type or "raw", variant or "-",
+            )
+
     def register_models(self) -> None:
         """Register all required models with the inference service."""
         max_retries = 5
@@ -267,30 +353,15 @@ class ParkingLotApp:
             for model_id, mdef in MODEL_DEFS.items():
                 variant = mdef.get("variant")
                 # app-manager's PreloadModels registers manifest-declared
-                # models at app start using variant from platform.db — which
-                # is empty for yolov5m_vehicles, so ai-runtime falls back to
-                # the default hailo_yolov8n backend (wrong tensor name →
-                # postprocess throws). Re-registering with our variant blob
-                # makes ai-runtime re-init the postprocess session with the
-                # matching backend_function (init_post_process replaces the
-                # existing session). Models without a variant have nothing
-                # to re-apply, so they keep the cheap skip.
+                # models at app start. Models without a variant have nothing
+                # to re-apply, so they keep the cheap skip; models with a
+                # variant go through _register_one, which accepts a correct
+                # incumbent and replaces a mis-configured one (see there).
                 if model_id in registered and not variant:
                     logger.info("Model %s already registered", model_id)
                     continue
                 try:
-                    reg_type = mdef.get("register_type", mdef["type"])
-                    self.infer_client.register_model(
-                        model_path=mdef["path"],
-                        model_id=model_id,
-                        owner_id=Config.get_app_id(),
-                        model_type=reg_type,
-                        model_variant=variant,
-                    )
-                    logger.info(
-                        "Registered model: %s (type=%s, variant=%s)",
-                        model_id, reg_type or "raw", variant or "-",
-                    )
+                    self._register_one(model_id, mdef)
                 except Exception as e:
                     logger.error(
                         "Failed to register %s (attempt %d/%d): %s",

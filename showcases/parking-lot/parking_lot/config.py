@@ -138,6 +138,14 @@ MODEL_DEFS = {
             "max_boxes": 80,
             "labels": ["vehicle"],
         }),
+        # When app-manager preloads this id (platform row or bundled
+        # package), ai-runtime already holds a registration whose variant
+        # differs textually from ours (composed label table). The startup
+        # registration inspects the refusal message: an incumbent routing
+        # through this same backend_function is kept as-is; anything else
+        # (e.g. the default hailo_yolov8n backend from a pre-profile row)
+        # is force-replaced — see app.py _register_one.
+        "expected_backend": "yolov5m_vehicles",
     },
     "scdepthv3": {
         "path": _model_path("depth", "scdepthv3.hef"),
