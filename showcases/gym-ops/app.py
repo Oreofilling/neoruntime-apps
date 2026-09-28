@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import signal
 import threading
 import time
 import urllib.parse
@@ -1305,8 +1306,33 @@ class GymApp:
         self._running.clear()
 
 
+def _handle_term(signum, _frame):
+    """Translate SIGTERM into the normal shutdown path.
+
+    The container runs this module as PID 1, and the kernel ignores
+    default-disposition signals for PID 1: without an explicit handler,
+    containerd's SIGTERM never reaches Python and every app-manager stop
+    degrades to the full grace-timeout wait followed by SIGKILL (measured
+    on device: 30s hang, exit 137). Raising SystemExit from the handler
+    unwinds Flask's serve_forever select just like Ctrl-C does.
+    """
+    print(f"[app] received signal {signum}, shutting down", flush=True)
+    raise SystemExit(0)
+
+
 def main() -> None:
-    GymApp().start()
+    signal.signal(signal.SIGTERM, _handle_term)
+    app = GymApp()
+    try:
+        app.start()
+    except (KeyboardInterrupt, SystemExit):
+        print("[app] web server stopped", flush=True)
+    finally:
+        # stop() clears the running flag so daemon loops wind down; exit
+        # deterministically afterwards so a slow teardown can never push
+        # container stop back into the kill-timeout path.
+        app.stop()
+        os._exit(0)
 
 
 if __name__ == "__main__":

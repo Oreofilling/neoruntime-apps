@@ -1,6 +1,6 @@
 FROM python:3.11-slim-bookworm
 
-LABEL version="0.1.0"
+LABEL version="0.1.1"
 LABEL description="GymOps Pose Coach - gym pose analysis, counting, zone occupancy, safety alerts"
 
 # HTTPS apt sources: some build networks block plain-HTTP egress (deb.debian.org:80)
