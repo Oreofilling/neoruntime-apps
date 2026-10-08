@@ -8,12 +8,12 @@ kind: Application
 metadata:
   id: shelf-ops
   name: ShelfOps Shelf Slot Recognition
-  version: 0.4.0
+  version: 0.4.1
   description: Slot-anchored CLIP recognition (product/empty per slot) or full-frame grid counting (slot_mode), stockout-restock state machine, and time-bucket heatmap analytics
   author: NeoRuntime Team
 
 spec:
-  image: neoruntime/shelf-ops:0.4.0
+  image: neoruntime/shelf-ops:0.4.1
 
   resources:
     cpu: "300%"

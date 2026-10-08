@@ -284,5 +284,44 @@ class TestVideoControlEndpoints(unittest.TestCase):
         self.assertFalse(data["active"])
 
 
+class TestBuildHdPreview(unittest.TestCase):
+    """_build_hd_preview: gym-ops-style wss/443 console-proxy URL (1.2.4)."""
+
+    def _build(self, env: dict) -> dict:
+        from parking_lot.web import _build_hd_preview
+        req = MagicMock()
+        req.host = "192.168.93.72:8090"
+        with patch.dict(os.environ, env, clear=False):
+            return _build_hd_preview(req)
+
+    def test_default_is_wss_through_console_proxy(self) -> None:
+        cfg = self._build({"PLATFORM_API_TOKEN": "tok-secret"})
+        self.assertTrue(cfg["enabled"])
+        # 8080 is loopback-bound on this stack — the browser must ride the
+        # console nginx on 443 instead (gym-ops' route).
+        self.assertEqual(cfg["wsUrl"], "wss://192.168.93.72:443/api/v1/h264/main?token=tok-secret")
+
+    def test_unexpanded_token_disables_hd(self) -> None:
+        cfg = self._build({"PLATFORM_API_TOKEN": "${AIPC_TOKEN_KEY}"})
+        self.assertFalse(cfg["enabled"])
+        self.assertEqual(cfg["wsUrl"], "")
+
+    def test_scheme_port_overridable(self) -> None:
+        cfg = self._build({
+            "PLATFORM_API_TOKEN": "tok-secret",
+            "PLATFORM_API_WS_SCHEME": "ws",
+            "PLATFORM_API_PORT": "18080",
+        })
+        self.assertTrue(cfg["enabled"])
+        self.assertEqual(cfg["wsUrl"], "ws://192.168.93.72:18080/api/v1/h264/main?token=tok-secret")
+
+    def test_env_disable_wins(self) -> None:
+        cfg = self._build({
+            "PLATFORM_API_TOKEN": "tok-secret",
+            "HD_PREVIEW_ENABLED": "0",
+        })
+        self.assertFalse(cfg["enabled"])
+
+
 if __name__ == "__main__":
     unittest.main()
