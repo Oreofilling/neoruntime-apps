@@ -54,41 +54,85 @@ DSP_QUOTA_COOLDOWN_S = float(os.environ.get("PARKING_LOT_DSP_COOLDOWN", "10"))
 # ---------------------------------------------------------------------------
 # Character set for license plate OCR (CTC decoder)
 # PaddleOCR v5 dictionary — loaded from ppocrv5_dict.txt bundled with the app.
-# Layout: dict_chars + space + CTC_blank.  Blank is at the LAST index.
+# Layout (PaddleOCR CTCLabelDecode with use_space_char=True):
+#   index 0          : CTC blank token (placeholder "" — never emitted)
+#   index 1 .. N     : dict chars
+#   index N+1 (last) : space character
+# Matches PaddleOCR's ["blank"] + dict + [" "] and model-showcase's loader.
+# The previous layout put blank LAST, shifting every class by one on the
+# raw-output decode path (blank 0 read as the dict's first char U+3000).
 # ---------------------------------------------------------------------------
 
 _PPOCRV5_DICT_PATH = os.path.join(os.path.dirname(__file__), "ppocrv5_dict.txt")
 
 
 def _load_ppocrv5_charset() -> List[str]:
-    """Load PaddleOCR v5 dictionary as a list of character tokens.
+    """Load the FULL PaddleOCR v5 decode table: [blank] + dict + [space].
 
-    PaddleOCR uses: dict characters (N) + optional space + CTC blank at end.
-    With use_space_char=True (default), the layout is:
-        index 0 .. N-1    : dict chars
-        index N           : space character (" ")
-        index N+1         : CTC blank  (not included in charset;
-                          passed separately to ctc_greedy_decode)
-
+    The blank slot holds "" and is never emitted — the decoder skips it.
     IMPORTANT: We return a **list** (not a string) because some dict entries
     are multi-codepoint characters (e.g. flag emojis like 🇩🇪).  Using a
     string would break the 1:1 index mapping that CTC decoding relies on,
     since Python string indexing operates on code points, not graphemes.
     """
     if not os.path.isfile(_PPOCRV5_DICT_PATH):
-        return list("0123456789ABCDEFGHJKLMNPQRSTUVWXYZ") + [" "]
+        return [""] + list("0123456789ABCDEFGHJKLMNPQRSTUVWXYZ") + [" "]
     with open(_PPOCRV5_DICT_PATH, "r", encoding="utf-8") as f:
         # NOTE: use rstrip("\n") only — Python's strip() removes U+3000
         # (full-width space) which is a valid dict character, causing a
         # charset-length mismatch vs the model's output dimensionality.
         chars = [line.rstrip("\n") for line in f if line.rstrip("\n")]
-    return chars + [" "]
+    return [""] + chars + [" "]
 
 
 LPR_CHARSET: List[str] = _load_ppocrv5_charset()
 
-# PaddleOCR v5: CTC blank token is at the LAST index (len(charset)).
-LPR_CTC_BLANK = len(LPR_CHARSET)
+# PaddleOCR v5: CTC blank token is at index 0 (prepended by CTCLabelDecode).
+LPR_CTC_BLANK = 0
+
+# ---------------------------------------------------------------------------
+# Plate candidate gating & tracking
+# Real-lot scenes light up dozens of low-quality plate candidates (grilles,
+# bumper stripes on distant cars); every candidate costs an OCR RPC, and the
+# old single global vote window let different plates pollute each other's
+# readings. These knobs gate candidates BEFORE OCR and smooth readings
+# per-track (IoU-matched) instead of globally.
+# ---------------------------------------------------------------------------
+
+# Minimum normalized candidate area (w*h). 0.001 ≈ a 100x20 px plate at
+# 1080p — far-field specks below that never OCR usefully.
+PLATE_MIN_AREA = float(os.environ.get("PLATE_MIN_AREA", "0.001"))
+# Per-frame OCR batch cap; candidates arrive detection-confidence-sorted.
+PLATE_MAX_PER_FRAME = int(os.environ.get("PLATE_MAX_PER_FRAME", "8"))
+# Require the plate center to sit inside a vehicle box (or PLATE_ROI).
+PLATE_REQUIRE_IN_VEHICLE = os.environ.get(
+    "PLATE_REQUIRE_IN_VEHICLE", "1",
+).strip().lower() not in ("0", "false", "off")
+
+
+def _parse_roi(raw: str) -> "Tuple[float, float, float, float] | None":
+    parts = [p for p in raw.replace(";", ",").split(",") if p.strip()]
+    if len(parts) != 4:
+        return None
+    try:
+        x, y, w, h = (float(p) for p in parts)
+    except ValueError:
+        return None
+    return (x, y, w, h) if w > 0 and h > 0 else None
+
+
+# Optional normalized "x,y,w,h" region: plates outside every vehicle box are
+# still accepted inside this ROI (e.g. a gate camera that crops vehicles).
+PLATE_ROI = _parse_roi(os.environ.get("PLATE_ROI", ""))
+
+# IoU tracker knobs: match threshold, votes to confirm/correct a text, vote
+# window, minimum OCR conf to count a vote, track expiry, event re-emit gap.
+PLATE_TRACK_IOU = float(os.environ.get("PLATE_TRACK_IOU", "0.25"))
+PLATE_CONFIRM_FRAMES = int(os.environ.get("PLATE_CONFIRM_FRAMES", "2"))
+PLATE_VOTE_WINDOW = int(os.environ.get("PLATE_VOTE_WINDOW", "5"))
+PLATE_MIN_VOTE_CONF = float(os.environ.get("PLATE_MIN_VOTE_CONF", "0.7"))
+PLATE_TRACK_TTL_S = float(os.environ.get("PLATE_TRACK_TTL_S", "2.0"))
+PLATE_EMIT_TTL_S = float(os.environ.get("PLATE_EMIT_TTL_S", "30.0"))
 
 # ---------------------------------------------------------------------------
 # COCO vehicle class mapping (used by yolov5m_vehicles)
@@ -106,12 +150,49 @@ _COCO_VEHICLE_CLASSES: Dict[int, str] = {
 # ---------------------------------------------------------------------------
 
 MODEL_DEFS = {
+    # 5-class security YOLOv8n (640x384 NV12) — the vehicle detector since
+    # 1.2.2. Replaces yolov5m_vehicles (1920x1080 RGB) as the default: the
+    # yolov8n path skips the NV12->BGR->RGB 1080p conversion and runs the
+    # whole-frame input at ~38ms vs ~1.2s for the yolov5m chain (93.72
+    # probe, 2026-09-22). Class table per the sidecar
+    # hailo_yolov8n_384_640.json: 1=person, 2=vehicle, 3=face,
+    # 4=license_plate (label_offset 1) — hence vehicle_class_ids=(2,).
+    "yolov8n_vehicle_det": {
+        "path": _model_path("detection", "hailo_yolov8n_384_640.hef"),
+        "type": "detection",
+        "input_format": "nv12",
+        "input_width": 640,
+        "input_height": 384,
+        # register_type "detection" keeps ai-runtime's init_post_process
+        # active so the variant config_json below is applied verbatim.
+        "register_type": "detection",
+        # backend_function must be the generic yolov8n loader (the
+        # hailo_yolov8n_384_640 profile name is NOT a known detection
+        # backend — ai-runtime enumerates: hailo_yolov8n, hailo_yolov8s,
+        # hailo_yolov8m, yolov5m_vehicles).
+        "expected_backend": "hailo_yolov8n",
+        "variant": json.dumps({
+            "backend_function": "hailo_yolov8n",
+            "iou_threshold": 0.45,
+            "detection_threshold": 0.30,
+            "output_activation": "none",
+            "label_offset": 1,
+            "max_boxes": 100,
+            "labels": ["unlabeled", "person", "vehicle", "face", "license_plate"],
+        }),
+        # Multi-class model: the parse paths keep only class 2 (vehicle)
+        # and drop person/face/plate boxes. Absent for single-class
+        # models (yolov5m_vehicles) where every box is a vehicle.
+        "vehicle_class_ids": (2,),
+    },
+    # Legacy 1080p vehicle detector, kept for A/B via VEHICLE_MODEL=yolov5m_vehicles.
     "yolov5m_vehicles": {
         "path": _model_path("detection", "yolov5m_vehicles.hef"),
         "type": "detection",
         "input_format": "rgb",
         "input_width": 1920,
         "input_height": 1080,
+        "expected_backend": "yolov5m_vehicles",
         # register_type MUST be non-empty ("detection") so ai-runtime's
         # init_post_process runs (grpc_service.cpp gate) and applies the
         # variant config_json below. An empty register_type skips postprocess
@@ -138,6 +219,14 @@ MODEL_DEFS = {
             "max_boxes": 80,
             "labels": ["vehicle"],
         }),
+        # When app-manager preloads this id (platform row or bundled
+        # package), ai-runtime already holds a registration whose variant
+        # differs textually from ours (composed label table). The startup
+        # registration inspects the refusal message: an incumbent routing
+        # through this same backend_function is kept as-is; anything else
+        # (e.g. the default hailo_yolov8n backend from a pre-profile row)
+        # is force-replaced — see app.py _register_one.
+        "expected_backend": "yolov5m_vehicles",
     },
     "scdepthv3": {
         "path": _model_path("depth", "scdepthv3.hef"),

@@ -8,6 +8,7 @@ rendering) and the top-level entry point.
 import json
 import logging
 import os
+import re
 import signal
 import sys
 import threading
@@ -43,6 +44,16 @@ from .config import (
     LPR_CHARSET,
     LPR_CTC_BLANK,
     MODEL_DEFS,
+    PLATE_CONFIRM_FRAMES,
+    PLATE_EMIT_TTL_S,
+    PLATE_MAX_PER_FRAME,
+    PLATE_MIN_AREA,
+    PLATE_MIN_VOTE_CONF,
+    PLATE_REQUIRE_IN_VEHICLE,
+    PLATE_ROI,
+    PLATE_TRACK_IOU,
+    PLATE_TRACK_TTL_S,
+    PLATE_VOTE_WINDOW,
     PLATFORM_API_TOKEN,
     PLATFORM_API_URL,
     STALL_BURST_INFO_THRESHOLD,
@@ -55,11 +66,12 @@ from .postprocess import (
     PlateDetection,
     PlateSnapshot,
     PipelineResult,
-    PlateAccumulator,
+    PlateTracker,
     SpoofAlert,
     SpoofResult,
     VehicleDetection,
     analyze_depth_spoof,
+    center_in_boxes,
     decode_recognition,
     letterbox_crop,
     parse_nms_raw,
@@ -70,6 +82,33 @@ from .postprocess import (
 from .web import FrameBuffer, create_flask_app, sse_broadcast
 
 logger = logging.getLogger("parking-lot")
+
+
+# ai-runtime refuses a same-id re-registration whose variant differs and
+# embeds the incumbent config in the refusal text:
+#   "model id 'X' is already registered with a different configuration
+#    (type='detection' variant='{"backend_function": ...}')"
+_INCUMBENT_VARIANT_RE = re.compile(r"variant='(\{.*?\})'")
+
+
+def _incumbent_uses_backend(err_msg: str, backend: str) -> bool:
+    """True when a registration-refusal message shows the incumbent variant
+    already routes through ``backend``.
+
+    Used by the startup registration to accept an app-manager preload whose
+    variant differs from ours only in advisory fields (composed label table,
+    thresholds) — evicting a working registration over those would tear down
+    in-flight sessions for nothing. Parse failures read as "not ours" so the
+    caller falls through to the replace path.
+    """
+    match = _INCUMBENT_VARIANT_RE.search(err_msg)
+    if not match:
+        return False
+    try:
+        incumbent = json.loads(match.group(1))
+    except ValueError:
+        return False
+    return incumbent.get("backend_function") == backend
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +202,20 @@ class ParkingLotApp:
         self._active_infer_stream: str = STREAM_ID
         self.target_fps = TARGET_FPS
         self.depth_spoof_threshold = DEPTH_SPOOF_THRESHOLD
-        self.plate_accumulator = PlateAccumulator(window_size=5, min_confidence=0.7)
+        # Per-plate IoU tracker with independent vote windows (1.2.5):
+        # replaces the single global accumulator whose shared history let
+        # different plates in frame pollute each other's readings.
+        self.plate_tracker = PlateTracker(
+            iou_threshold=PLATE_TRACK_IOU,
+            confirm_votes=PLATE_CONFIRM_FRAMES,
+            vote_window=PLATE_VOTE_WINDOW,
+            min_vote_conf=PLATE_MIN_VOTE_CONF,
+            track_ttl=PLATE_TRACK_TTL_S,
+            emit_ttl=PLATE_EMIT_TTL_S,
+        )
+        # track_id -> last snapshot id (one gallery crop per track reading;
+        # TTL re-emits refresh the event but not the snapshot)
+        self._track_snapshots: Dict[int, str] = {}
 
         self._running = False
         self._infer_count = 0
@@ -253,6 +305,64 @@ class ParkingLotApp:
             "last_error": "",
         }
 
+    def _register_one(self, model_id: str, mdef: Dict[str, Any]) -> None:
+        """Register one model, tolerating an existing incumbent registration.
+
+        app-manager preloads manifest-declared models at app start with a
+        platform-composed variant that differs textually from ours (composed
+        label table), and ai-runtime refuses a same-id re-registration with
+        a different config. So when the refusal shows the incumbent already
+        routes through our backend_function (``expected_backend``), keep it;
+        when the incumbent is mis-configured — e.g. a platform row created
+        before the custom postprocess profile existed, leaving the default
+        hailo_yolov8n backend (wrong NMS tensor name → postprocess throws) —
+        force-drop it and re-apply our variant blob (empty-owner unregister
+        is ai-runtime's system-level unload).
+        """
+        reg_type = mdef.get("register_type", mdef["type"])
+        variant = mdef.get("variant")
+        expected_backend = mdef.get("expected_backend")
+        try:
+            self.infer_client.register_model(
+                model_path=mdef["path"],
+                model_id=model_id,
+                owner_id=Config.get_app_id(),
+                model_type=reg_type,
+                model_variant=variant,
+            )
+            logger.info(
+                "Registered model: %s (type=%s, variant=%s)",
+                model_id, reg_type or "raw", variant or "-",
+            )
+            return
+        except Exception as e:
+            msg = str(e)
+            if not (expected_backend and "already registered" in msg):
+                raise
+            if _incumbent_uses_backend(msg, expected_backend):
+                logger.info(
+                    "Keeping existing registration for %s "
+                    "(backend_function=%s already active)",
+                    model_id, expected_backend,
+                )
+                return
+            logger.warning(
+                "Replacing mis-configured registration for %s: %s",
+                model_id, msg,
+            )
+            self.infer_client.unregister_model(model_id=model_id)
+            self.infer_client.register_model(
+                model_path=mdef["path"],
+                model_id=model_id,
+                owner_id=Config.get_app_id(),
+                model_type=reg_type,
+                model_variant=variant,
+            )
+            logger.info(
+                "Re-registered model: %s (type=%s, variant=%s)",
+                model_id, reg_type or "raw", variant or "-",
+            )
+
     def register_models(self) -> None:
         """Register all required models with the inference service."""
         max_retries = 5
@@ -267,30 +377,15 @@ class ParkingLotApp:
             for model_id, mdef in MODEL_DEFS.items():
                 variant = mdef.get("variant")
                 # app-manager's PreloadModels registers manifest-declared
-                # models at app start using variant from platform.db — which
-                # is empty for yolov5m_vehicles, so ai-runtime falls back to
-                # the default hailo_yolov8n backend (wrong tensor name →
-                # postprocess throws). Re-registering with our variant blob
-                # makes ai-runtime re-init the postprocess session with the
-                # matching backend_function (init_post_process replaces the
-                # existing session). Models without a variant have nothing
-                # to re-apply, so they keep the cheap skip.
+                # models at app start. Models without a variant have nothing
+                # to re-apply, so they keep the cheap skip; models with a
+                # variant go through _register_one, which accepts a correct
+                # incumbent and replaces a mis-configured one (see there).
                 if model_id in registered and not variant:
                     logger.info("Model %s already registered", model_id)
                     continue
                 try:
-                    reg_type = mdef.get("register_type", mdef["type"])
-                    self.infer_client.register_model(
-                        model_path=mdef["path"],
-                        model_id=model_id,
-                        owner_id=Config.get_app_id(),
-                        model_type=reg_type,
-                        model_variant=variant,
-                    )
-                    logger.info(
-                        "Registered model: %s (type=%s, variant=%s)",
-                        model_id, reg_type or "raw", variant or "-",
-                    )
+                    self._register_one(model_id, mdef)
                 except Exception as e:
                     logger.error(
                         "Failed to register %s (attempt %d/%d): %s",
@@ -630,23 +725,41 @@ class ParkingLotApp:
         logger.info("Infer stream selected: %s (available=%s)", chosen, available)
         return chosen
 
+    @staticmethod
+    def _vehicle_boxes_from_objects(
+        objects: Any, mdef: Dict[str, Any],
+    ) -> List[VehicleDetection]:
+        """Filter raw detection objects down to vehicle boxes.
+
+        Single-class models (yolov5m_vehicles) emit only vehicles, so
+        every box passes. Multi-class models declare vehicle_class_ids
+        (the 5-class security yolov8n: 2=vehicle among
+        person/face/plate) and non-vehicle boxes are dropped here —
+        without this filter the class_name fallback would mislabel
+        person boxes as vehicles.
+        """
+        allowed = mdef.get("vehicle_class_ids")
+        vehicles = []
+        for obj in objects:
+            class_id = int(getattr(obj, "class_id", 0))
+            if allowed is not None and class_id not in allowed:
+                continue
+            vehicles.append(VehicleDetection(
+                bbox=(float(obj.bbox.x), float(obj.bbox.y),
+                      float(obj.bbox.width), float(obj.bbox.height)),
+                class_id=class_id,
+                class_name=_COCO_VEHICLE_CLASSES.get(class_id, "vehicle"),
+                confidence=float(obj.score),
+            ))
+        return vehicles
+
     def _detect_vehicles(self, bgr: np.ndarray) -> List[VehicleDetection]:
         model_id = VEHICLE_MODEL
         mdef = MODEL_DEFS[model_id]
         inp = prepare_input(bgr, mdef["input_width"], mdef["input_height"], mdef["input_format"])
         result = self.infer_client.infer(inp, model_id=model_id, timeout_ms=5000)
         if result.objects:
-            vehicles = []
-            for obj in result.objects:
-                cls_name = _COCO_VEHICLE_CLASSES.get(getattr(obj, "class_id", 0), "vehicle")
-                vehicles.append(VehicleDetection(
-                    bbox=(float(obj.bbox.x), float(obj.bbox.y),
-                          float(obj.bbox.width), float(obj.bbox.height)),
-                    class_id=getattr(obj, "class_id", 0),
-                    class_name=cls_name,
-                    confidence=float(obj.score),
-                ))
-            return vehicles
+            return self._vehicle_boxes_from_objects(result.objects, mdef)
         if getattr(result, "raw_outputs", None):
             return parse_nms_raw(result)
         return []
@@ -665,20 +778,6 @@ class ParkingLotApp:
             return raw.reshape(h, mdef["input_width"])
         return None
 
-    def _detect_plates(self, bgr: np.ndarray) -> List[Tuple[float, float, float, float]]:
-        mdef = MODEL_DEFS["license_plate_det"]
-        inp = prepare_input(bgr, mdef["input_width"], mdef["input_height"], mdef["input_format"])
-        result = self.infer_client.infer(inp, model_id="license_plate_det", timeout_ms=5000)
-        if getattr(result, "objects", None) and result.objects:
-            return [
-                (float(obj.bbox.x), float(obj.bbox.y),
-                 float(obj.bbox.width), float(obj.bbox.height))
-                for obj in result.objects
-            ]
-        if getattr(result, "raw_outputs", None):
-            return parse_yolo_grid(result, "license_plate_det")
-        return []
-
     def _prepare_plate_input(self, bgr: np.ndarray,
                              bbox: Tuple[float, float, float, float]) -> np.ndarray:
         """Crop a plate region and convert to the recognition model's input."""
@@ -696,19 +795,14 @@ class ParkingLotApp:
             return np.concatenate([y_plane.flatten(), uv_i420.flatten()])
         return cv2.cvtColor(crop, cv2.COLOR_BGR2RGB).flatten()
 
-    def _recognize_plate(self, bgr: np.ndarray,
-                         bbox: Tuple[float, float, float, float]) -> PlateDetection:
-        rec_input = self._prepare_plate_input(bgr, bbox)
-        rec_result = self.infer_client.infer(rec_input, model_id="plate_recognition", timeout_ms=3000)
-        text, conf = decode_recognition(rec_result, LPR_CHARSET, blank=LPR_CTC_BLANK)
-        text, conf = self.plate_accumulator.update(text, conf)
-        return PlateDetection(bbox=bbox, text=text, confidence=conf)
+    def _recognize_plates_batch(
+        self, bgr: np.ndarray, bboxes: List[Tuple[float, ...]],
+        dsp_src: Any = None,
+    ) -> Tuple[List[PlateDetection], List[PlateDetection]]:
+        """Recognize gated plate candidates and fold them through the tracker.
 
-    def _recognize_plates_batch(self, bgr: np.ndarray,
-                                bboxes: List[Tuple[float, float, float, float]],
-                                dsp_src: Any = None,
-                                ) -> List[PlateDetection]:
-        """Recognize all detected plates in one batch RPC.
+        ``bboxes`` are parse_yolo_grid 5-tuples (x, y, w, h, conf) or plain
+        4-tuples; geometry is sliced off with ``b[:4]``.
 
         Plate crops are mutually independent, so N plates collapse from N
         sequential ``infer()`` round-trips to a single ``infer_batch`` (ai-runtime
@@ -719,67 +813,69 @@ class ParkingLotApp:
         ``multi_crop_hw`` job (native letterbox scaling); any tile the DSP path
         did not produce falls back to ``_prepare_plate_input`` on BGR.
 
-        Order is preserved (zip with ``bboxes``) so the temporal
-        ``plate_accumulator`` sees plates in the same order as before.
+        Returns ``(states, events)`` from ``plate_tracker.update``: states are
+        the per-frame confirmed plates, events the emit-gated subset (new /
+        corrected / TTL-refreshed tracks). Called even with zero candidates so
+        stale tracks expire on schedule.
         """
-        if not bboxes:
-            return []
+        bboxes4 = [b[:4] for b in bboxes]
 
-        dsp_tiles: Optional[List[Optional[np.ndarray]]] = None
-        if dsp_src is not None and self._dsp_active():
-            dsp_tiles = self._dsp_plate_tiles(dsp_src, bboxes)
+        detections: List[Tuple[Tuple[float, float, float, float], str, float]] = []
+        if bboxes4:
+            dsp_tiles: Optional[List[Optional[np.ndarray]]] = None
+            if dsp_src is not None and self._dsp_active():
+                dsp_tiles = self._dsp_plate_tiles(dsp_src, bboxes4)
 
-        def _tile_or_cpu(i: int, bbox: Tuple[float, float, float, float]
-                         ) -> np.ndarray:
-            if dsp_tiles is not None and dsp_tiles[i] is not None:
-                return dsp_tiles[i].flatten()  # type: ignore[union-attr]
-            return self._prepare_plate_input(bgr, bbox)
+            def _tile_or_cpu(i: int, bbox: Tuple[float, float, float, float]
+                             ) -> np.ndarray:
+                if dsp_tiles is not None and dsp_tiles[i] is not None:
+                    return dsp_tiles[i].flatten()  # type: ignore[union-attr]
+                return self._prepare_plate_input(bgr, bbox)
 
-        inputs = [_tile_or_cpu(i, bbox) for i, bbox in enumerate(bboxes)]
-        results: List[Optional[Any]] = [None] * len(inputs)
+            inputs = [_tile_or_cpu(i, bbox) for i, bbox in enumerate(bboxes4)]
+            results: List[Optional[Any]] = [None] * len(inputs)
 
-        # Warmup-aware timeout for plate_recognition (steady 3000ms, warmup
-        # 6000ms).  Computed once per frame (one counter increment).
-        rec_t = self._infer_timeout_ms("plate_recognition", steady_ms=3000)
+            # Warmup-aware timeout for plate_recognition (steady 3000ms, warmup
+            # 6000ms).  Computed once per frame (one counter increment).
+            rec_t = self._infer_timeout_ms("plate_recognition", steady_ms=3000)
 
-        # Batch path only pays off for >1 plate; a single plate goes straight
-        # to the sequential fill below (no extra RPC overhead).
-        if self._batch_enabled and len(inputs) > 1:
-            try:
-                batch_results = self.infer_client.infer_batch([
-                    BatchInferItem(inp, "plate_recognition", timeout_ms=rec_t)
-                    for inp in inputs
-                ], timeout_ms=5000)
-                # Server guarantees one response per request, same order.
-                # Pad/truncate defensively so the fallback loop cannot IndexError.
-                got = [r for r in batch_results]
-                results = (got + [None] * len(inputs))[:len(inputs)]
-            except Exception as exc:
-                if "UNIMPLEMENTED" in str(exc):
-                    logger.warning(
-                        "InferBatch unsupported; plate recognition uses sequential infer().",
-                    )
-                else:
-                    logger.warning("Plate batch failed, going sequential: %s", exc)
-
-        # Sequential fill for any unresolved slot (fallback or single plate).
-        for i, inp in enumerate(inputs):
-            if results[i] is None:
+            # Batch path only pays off for >1 plate; a single plate goes straight
+            # to the sequential fill below (no extra RPC overhead).
+            if self._batch_enabled and len(inputs) > 1:
                 try:
-                    results[i] = self.infer_client.infer(
-                        inp, model_id="plate_recognition", timeout_ms=rec_t)
+                    batch_results = self.infer_client.infer_batch([
+                        BatchInferItem(inp, "plate_recognition", timeout_ms=rec_t)
+                        for inp in inputs
+                    ], timeout_ms=5000)
+                    # Server guarantees one response per request, same order.
+                    # Pad/truncate defensively so the fallback loop cannot IndexError.
+                    got = [r for r in batch_results]
+                    results = (got + [None] * len(inputs))[:len(inputs)]
                 except Exception as exc:
-                    logger.debug("Plate recognition failed: %s", exc)
+                    if "UNIMPLEMENTED" in str(exc):
+                        logger.warning(
+                            "InferBatch unsupported; plate recognition uses sequential infer().",
+                        )
+                    else:
+                        logger.warning("Plate batch failed, going sequential: %s", exc)
 
-        plates: List[PlateDetection] = []
-        for bbox, rec in zip(bboxes, results):
-            if rec is None:
-                continue
-            text, conf = decode_recognition(rec, LPR_CHARSET, blank=LPR_CTC_BLANK)
-            text, conf = self.plate_accumulator.update(text, conf)
-            if text:
-                plates.append(PlateDetection(bbox=bbox, text=text, confidence=conf))
-        return plates
+            # Sequential fill for any unresolved slot (fallback or single plate).
+            for i, inp in enumerate(inputs):
+                if results[i] is None:
+                    try:
+                        results[i] = self.infer_client.infer(
+                            inp, model_id="plate_recognition", timeout_ms=rec_t)
+                    except Exception as exc:
+                        logger.debug("Plate recognition failed: %s", exc)
+
+            for bbox, rec in zip(bboxes4, results):
+                if rec is None:
+                    continue
+                text, conf = decode_recognition(rec, LPR_CHARSET, blank=LPR_CTC_BLANK)
+                if text:
+                    detections.append((bbox, text, conf))
+
+        return self.plate_tracker.update(detections)
 
     def run_frame_pipeline(self, bgr: np.ndarray,
                            nv12: Optional[np.ndarray] = None,
@@ -887,16 +983,8 @@ class ParkingLotApp:
         if vehicle_result is not None:
             try:
                 if vehicle_result.objects:
-                    for obj in vehicle_result.objects:
-                        cls_name = _COCO_VEHICLE_CLASSES.get(
-                            getattr(obj, "class_id", 0), "vehicle")
-                        vehicles.append(VehicleDetection(
-                            bbox=(float(obj.bbox.x), float(obj.bbox.y),
-                                  float(obj.bbox.width), float(obj.bbox.height)),
-                            class_id=getattr(obj, "class_id", 0),
-                            class_name=cls_name,
-                            confidence=float(obj.score),
-                        ))
+                    vehicles = self._vehicle_boxes_from_objects(
+                        vehicle_result.objects, MODEL_DEFS[VEHICLE_MODEL])
                 elif getattr(vehicle_result, "raw_outputs", None):
                     vehicles = parse_nms_raw(vehicle_result)
             except Exception as exc:
@@ -920,24 +1008,30 @@ class ParkingLotApp:
                 logger.warning("Depth parse failed: %s", exc)
 
         # -- Parse plate detections ----------------------------------------
+        # 5-tuples (x, y, w, h, conf) from both paths: conf feeds candidate
+        # gating in _filter_plate_candidates (objects path keeps the
+        # detector's confidence; grid path already carries it).
         plate_dets: List[Tuple[float, ...]] = []
         if plate_result is not None:
             try:
                 if getattr(plate_result, "objects", None) and plate_result.objects:
                     plate_dets = [
                         (float(obj.bbox.x), float(obj.bbox.y),
-                         float(obj.bbox.width), float(obj.bbox.height))
+                         float(obj.bbox.width), float(obj.bbox.height),
+                         float(getattr(obj, "confidence", 0.0) or 0.0))
                         for obj in plate_result.objects
                     ]
                 elif getattr(plate_result, "raw_outputs", None):
                     plate_dets = parse_yolo_grid(plate_result, "license_plate_det")
             except Exception as exc:
                 logger.warning("Plate parse failed: %s", exc)
+        plate_dets = self._filter_plate_candidates(plate_dets, vehicles)
 
         # -- Phase 2: plate recognition (batched) --------------------------
         # N plates → 1 InferBatch RPC; falls back to sequential internally.
         # dsp_src lets the tiles come from one DSP multi_crop letterbox job.
-        plates = self._recognize_plates_batch(bgr, plate_dets, dsp_src=dsp_src)
+        plates, plate_events = self._recognize_plates_batch(
+            bgr, plate_dets, dsp_src=dsp_src)
 
         # -- Depth spoof analysis ------------------------------------------
         spoof_alerts: List[SpoofAlert] = []
@@ -957,10 +1051,47 @@ class ParkingLotApp:
         return PipelineResult(
             vehicles=vehicles,
             plates=plates,
+            plate_events=plate_events,
             depth_map=depth_map,
             spoof_alerts=spoof_alerts,
             infer_time_ms=(t1 - t0) * 1000.0,
         )
+
+    def _filter_plate_candidates(
+        self,
+        plate_dets: List[Tuple[float, ...]],
+        vehicles: List[VehicleDetection],
+    ) -> List[Tuple[float, ...]]:
+        """Gate plate candidates BEFORE any OCR RPC (1.2.5).
+
+        Real-lot scenes light up dozens of low-quality candidates (grilles,
+        bumper stripes on distant cars) and every candidate costs an OCR
+        round-trip — a full 32-candidate frame measured ~2.5 s infer_ms
+        (0.4 fps). Filters, in order:
+          1. minimum normalized area (unreadably small crops);
+          2. plate center inside a vehicle box, or inside PLATE_ROI when
+             configured (candidates with neither anchor are dropped when
+             PLATE_REQUIRE_IN_VEHICLE is on; with no vehicles and no ROI
+             configured the gate passes through — single-purpose gate cams);
+          3. confidence sort + per-frame cap (best N candidates only).
+        """
+        gated: List[Tuple[float, ...]] = []
+        vehicle_boxes = [v.bbox for v in vehicles] if PLATE_REQUIRE_IN_VEHICLE else []
+        has_anchor = bool(vehicle_boxes) or PLATE_ROI is not None
+        for det in plate_dets:
+            x, y, w, h = det[:4]
+            if w * h < PLATE_MIN_AREA:
+                continue
+            if has_anchor:
+                cx, cy = x + w / 2, y + h / 2
+                if not center_in_boxes(cx, cy, vehicle_boxes) and (
+                    PLATE_ROI is None
+                    or not center_in_boxes(cx, cy, [PLATE_ROI])
+                ):
+                    continue
+            gated.append(det)
+        gated.sort(key=lambda d: d[4] if len(d) > 4 else 0.0, reverse=True)
+        return gated[:PLATE_MAX_PER_FRAME]
 
     def _draw_overlay(self, bgr: np.ndarray, result: PipelineResult) -> np.ndarray:
         """Draw overlay on a copy — used by video-file path."""
@@ -1164,6 +1295,10 @@ class ParkingLotApp:
                 self._video_source.close()
                 self._video_source = None
             self._mode = "live"
+            # Plate tracks from the previous source (e.g. an uploaded video)
+            # must not seed readings of the live scene.
+            self.plate_tracker.reset()
+            self._track_snapshots.clear()
         with self._upload_lock:
             self._upload_progress["status"] = "idle"
         logger.info("Switched to live stream mode")
@@ -1174,6 +1309,10 @@ class ParkingLotApp:
             if self._video_source is not None:
                 self._video_source.close()
                 self._video_source = None
+            # Same isolation in reverse: live tracks must not vote on the
+            # uploaded video's plates.
+            self.plate_tracker.reset()
+            self._track_snapshots.clear()
             try:
                 self._video_source = VideoFrameSource(video_path)
             except ValueError as e:
@@ -1264,11 +1403,15 @@ class ParkingLotApp:
             ]
             self.event_client.publish("parking/vehicles", payload)
 
-        if result.plates:
+        # Emit-gated: only new / corrected / TTL-refreshed tracks go out on
+        # the wire (per-frame re-publishing of the same parked car was one
+        # of the duplicate-event complaints).
+        if result.plate_events:
             payload = [
                 {"bbox": [float(c) for c in p.bbox], "plate": p.text,
-                 "confidence": round(float(p.confidence), 3)}
-                for p in result.plates
+                 "confidence": round(float(p.confidence), 3),
+                 "track_id": p.track_id}
+                for p in result.plate_events
             ]
             self.event_client.publish("parking/plates", payload)
 
@@ -1522,38 +1665,46 @@ class ParkingLotApp:
         """
         elapsed = time.monotonic() - t0
 
-        # --- Overlay + FrameBuffer ---
-        overlay = self._draw_overlay(bgr, result)
-        _, jpeg = cv2.imencode(".jpg", overlay, [cv2.IMWRITE_JPEG_QUALITY, 85])
-        self.frame_buffer.put(jpeg.tobytes())
-
-        # --- Upload-only: VideoWriter + progress ---
+        # --- Upload-only: annotated preview + VideoWriter + progress ---
+        # In upload mode the annotated JPEG is both the preview stream and
+        # the VideoWriter frame. In live mode the capture loop already
+        # streams clean frames and the browser draws boxes on its overlay
+        # canvas — pushing burned-in frames here interleaved two renderings
+        # of every box on /stream (1.2.4 double-draw fix).
         # Snapshot source/writer under _video_lock so a concurrent switch_*
         # cannot release the writer mid-write (write-after-release) or null
         # the source between the mode check and the _frame_idx read.
+        overlay: Optional[np.ndarray] = None
         with self._video_lock:
             is_upload = self._mode == "upload" and self._video_source is not None
             vs = self._video_source
             writer = self._video_writer
-            if is_upload and writer is None and self._result_video_path is None:
-                # Lazy-init VideoWriter on first frame
-                h, w = bgr.shape[:2]
-                result_dir = "/app/uploads"
-                os.makedirs(result_dir, exist_ok=True)
-                self._result_video_path = os.path.join(
-                    result_dir, f"result_{int(time.time())}.mp4",
+            if is_upload:
+                overlay = self._draw_overlay(bgr, result)
+                _, jpeg = cv2.imencode(
+                    ".jpg", overlay, [cv2.IMWRITE_JPEG_QUALITY, 85],
                 )
-                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-                writer = cv2.VideoWriter(
-                    self._result_video_path, fourcc, vs.fps, (w, h),
-                )
-                self._video_writer = writer
+                self.frame_buffer.put(jpeg.tobytes())
+                if writer is None and self._result_video_path is None:
+                    # Lazy-init VideoWriter on first frame
+                    h, w = bgr.shape[:2]
+                    result_dir = "/app/uploads"
+                    os.makedirs(result_dir, exist_ok=True)
+                    self._result_video_path = os.path.join(
+                        result_dir, f"result_{int(time.time())}.mp4",
+                    )
+                    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                    writer = cv2.VideoWriter(
+                        self._result_video_path, fourcc, vs.fps, (w, h),
+                    )
+                    self._video_writer = writer
 
-            if is_upload and writer is not None:
-                # Write under the lock: switches are rare, and writing to a
-                # writer that another thread just released is the bug we're
-                # fixing. Holding for one frame encode (~ms) is acceptable.
-                writer.write(overlay)
+                if writer is not None:
+                    # Write under the lock: switches are rare, and writing to
+                    # a writer that another thread just released is the bug
+                    # we're fixing. Holding for one frame encode (~ms) is
+                    # acceptable.
+                    writer.write(overlay)
 
             frame_idx = vs._frame_idx if vs is not None else 0
 
@@ -1594,9 +1745,28 @@ class ParkingLotApp:
         # can draw detection boxes on the HD preview via a client-side canvas
         # (cv2 Hershey fonts can't render CJK plate text in-frame). Counts are
         # exposed separately as vehicle_count/plate_count for badges/stats.
+        # Snapshots are cut ONLY for emit-gated events (new / corrected
+        # track), one crop per (track, text): a parked car no longer floods
+        # the gallery every frame.
+        for p in result.plate_events:
+            if not p.text:
+                continue
+            prev = self._track_snapshots.get(p.track_id)
+            if prev is not None and prev.startswith(f"{p.text}|"):
+                continue  # same reading already cropped for this track
+            snap_id = self.add_plate_snapshot(bgr, p)
+            self._track_snapshots[p.track_id] = f"{p.text}|{snap_id}"
+            if len(self._track_snapshots) > 64:
+                # Drop oldest half — ids are monotonic via tracker._next_id
+                keep_ids = sorted(self._track_snapshots)[-32:]
+                self._track_snapshots = {
+                    k: v for k, v in self._track_snapshots.items()
+                    if k in set(keep_ids)
+                }
         plate_entries = []
         for p in result.plates:
-            snap_id = self.add_plate_snapshot(bgr, p) if p.text else ""
+            marker = self._track_snapshots.get(p.track_id, "")
+            snap_id = marker.split("|", 1)[1] if marker else ""
             plate_entries.append({
                 "bbox": [float(c) for c in p.bbox],
                 "plate": p.text,

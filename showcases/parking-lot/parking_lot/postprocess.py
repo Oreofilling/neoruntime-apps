@@ -5,7 +5,7 @@ Contains data types, NMS/grid decoders, CTC OCR decoder, anti-spoofing
 depth analysis, and image preparation helpers.
 """
 
-import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -37,6 +37,7 @@ class PlateDetection:
     bbox: Tuple[float, float, float, float]  # x, y, w, h (normalized)
     text: str
     confidence: float
+    track_id: int = 0  # PlateTracker lane id (0 = legacy, untracked)
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,10 @@ class SpoofAlert:
 class PipelineResult:
     vehicles: List[VehicleDetection] = field(default_factory=list)
     plates: List[PlateDetection] = field(default_factory=list)
+    # Emit-gated plate subset (new/corrected/refreshed tracks) — drives
+    # snapshots and the parking/plates event topic; `plates` stays the
+    # per-frame full state for overlays and stats.
+    plate_events: List[PlateDetection] = field(default_factory=list)
     depth_map: Optional[np.ndarray] = None
     spoof_alerts: List[SpoofAlert] = field(default_factory=list)
     infer_time_ms: float = 0.0
@@ -83,9 +88,10 @@ def ctc_greedy_decode(
 ) -> Tuple[str, float]:
     """Decode CTC logits into text using greedy strategy.
 
-    blank: index of the CTC blank token. For PaddleOCR v5 this is the
-           last index (len(charset)), for older models it was 0.
-    charset: a list of character tokens (one per model class, excluding blank).
+    blank: index of the CTC blank token — 0 for PaddleOCR v5 (blank is
+           prepended by CTCLabelDecode).
+    charset: the FULL class table, one entry per model output class, with
+           the blank slot at index ``blank`` (its placeholder is skipped).
     """
     if logits.ndim == 1:
         logits = logits.reshape(1, -1)
@@ -112,37 +118,179 @@ _ctc_greedy_decode = ctc_greedy_decode
 
 
 # ---------------------------------------------------------------------------
-# OCR Accumulator — temporal smoothing for plate text
+# Plate validation & per-track temporal voting (replaces the 1.2.4-era
+# single global PlateAccumulator, whose shared history let different
+# plates pollute each other's readings)
 # ---------------------------------------------------------------------------
 
+CN_PLATE_PROVINCES = set(
+    "京沪津渝冀晋辽吉黑苏浙皖闽赣鲁豫鄂湘粤桂琼川贵云藏陕甘青宁新"
+    "使领警学港澳"
+)
 
-class PlateAccumulator:
-    """Majority-vote temporal smoother for license plate readings."""
 
-    def __init__(self, window_size: int = 5, min_confidence: float = 0.7) -> None:
-        self._window_size = window_size
-        self._min_confidence = min_confidence
-        self._history: List[Tuple[str, float]] = []
-        self._lock = threading.Lock()
+def validate_plate_text(text: str) -> bool:
+    """Structural sanity check for OCR plate reads (CN formats + lenient).
 
-    def update(self, text: str, confidence: float) -> Tuple[str, float]:
-        with self._lock:
-            if text and confidence >= self._min_confidence:
-                self._history.append((text, confidence))
-                if len(self._history) > self._window_size:
-                    self._history = self._history[-self._window_size:]
-            if not self._history:
-                return text, confidence
+    Accepts the 7-char standard format (province + letter + 5 alnum) and
+    the 8-char new-energy format (province + letter + 6 alnum), or — when
+    no province character was recognized — any plain alphanumeric read.
+    Spaces, U+3000, middots and dots are stripped before checking.
+    """
+    if not text or "?" in text:
+        return False
+    t = (
+        text.replace(" ", "").replace("　", "")
+        .replace("·", "").replace(".", "")
+    )
+    if not 5 <= len(t) <= 8:
+        return False
+    if t[0] in CN_PLATE_PROVINCES:
+        body = t[1:]
+        if len(body) < 5 or not body[0].isascii() or not body[0].isalpha():
+            return False
+        rest = body[1:]
+        return rest.isascii() and rest.isalnum()
+    return t.isascii() and t.isalnum()
+
+
+def iou_xywh(
+    a: Tuple[float, float, float, float],
+    b: Tuple[float, float, float, float],
+) -> float:
+    """IoU of two normalized (x, y, w, h) boxes."""
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    x1, y1 = max(ax, bx), max(ay, by)
+    x2 = min(ax + aw, bx + bw)
+    y2 = min(ay + ah, by + bh)
+    inter = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+    union = aw * ah + bw * bh - inter
+    return inter / union if union > 0 else 0.0
+
+
+def center_in_boxes(cx: float, cy: float, boxes: List[Tuple[float, ...]]) -> bool:
+    """True if the point sits inside any normalized (x, y, w, h) box."""
+    for x, y, w, h in boxes:
+        if x <= cx <= x + w and y <= cy <= y + h:
+            return True
+    return False
+
+
+@dataclass
+class _PlateTrack:
+    id: int
+    bbox: Tuple[float, float, float, float]
+    history: List[Tuple[str, float]] = field(default_factory=list)
+    last_seen: float = 0.0
+    confirmed: str = ""    # current voted-and-validated text
+    emitted: str = ""      # text as of the last event emission
+    last_emit: float = 0.0
+
+
+class PlateTracker:
+    """IoU-matched per-plate temporal vote.
+
+    Each frame's (bbox, text, conf) detections are greedily matched to
+    existing tracks by IoU; unmatched detections open new tracks. Every
+    track keeps its OWN vote window, so different plates in the same frame
+    can no longer pollute each other's history. A track surfaces only
+    after ``confirm_votes`` consistent valid readings, and re-emits at
+    most once per ``emit_ttl`` (plus immediately on a text correction).
+    """
+
+    def __init__(
+        self,
+        *,
+        iou_threshold: float = 0.25,
+        confirm_votes: int = 2,
+        vote_window: int = 5,
+        min_vote_conf: float = 0.7,
+        track_ttl: float = 2.0,
+        emit_ttl: float = 30.0,
+    ) -> None:
+        self._iou_threshold = iou_threshold
+        self._confirm_votes = confirm_votes
+        self._vote_window = vote_window
+        self._min_vote_conf = min_vote_conf
+        self._track_ttl = track_ttl
+        self._emit_ttl = emit_ttl
+        self._tracks: List[_PlateTrack] = []
+        self._next_id = 1
+
+    def reset(self) -> None:
+        """Forget all tracks (mode switches: live ↔ upload)."""
+        self._tracks = []
+
+    def update(
+        self,
+        detections: List[Tuple[Tuple[float, float, float, float], str, float]],
+        now: "float | None" = None,
+    ) -> Tuple[List[PlateDetection], List[PlateDetection]]:
+        """Fold one frame's readings through the tracker.
+
+        detections: List[(bbox, text, conf)] — bbox normalized (x, y, w, h).
+        Returns (states, events): the per-frame confirmed plates (overlays,
+        stats) and the emit-gated subset (snapshots, parking/plates events).
+        """
+        now = time.monotonic() if now is None else now
+        self._tracks = [
+            t for t in self._tracks if now - t.last_seen <= self._track_ttl
+        ]
+        taken: set = set()
+        for bbox, text, conf in detections:
+            best: "Optional[_PlateTrack]" = None
+            best_iou = self._iou_threshold
+            for t in self._tracks:
+                if id(t) in taken:
+                    continue
+                v = iou_xywh(t.bbox, bbox)
+                if v > best_iou:
+                    best, best_iou = t, v
+            if best is None:
+                best = _PlateTrack(id=self._next_id, bbox=bbox)
+                self._next_id += 1
+                self._tracks.append(best)
+            taken.add(id(best))
+            best.bbox = bbox
+            best.last_seen = now
+            if text and conf >= self._min_vote_conf:
+                best.history = (best.history + [(text, conf)])[-self._vote_window:]
+
+        states: List[PlateDetection] = []
+        events: List[PlateDetection] = []
+        for t in self._tracks:
+            if not t.history:
+                continue
             counts: Dict[str, List[float]] = {}
-            for t, c in self._history:
-                counts.setdefault(t, []).append(c)
-            best_text = max(counts, key=lambda k: len(counts[k]))
-            avg_conf = sum(counts[best_text]) / len(counts[best_text])
-            return best_text, avg_conf
+            for txt, c in t.history:
+                counts.setdefault(txt, []).append(c)
+            top = max(counts, key=lambda k: len(counts[k]))
+            if (
+                top != t.confirmed
+                and len(counts[top]) >= self._confirm_votes
+                and validate_plate_text(top)
+            ):
+                t.confirmed = top  # first confirmation or corrected read
+            if not t.confirmed:
+                continue
+            confs = counts.get(t.confirmed) or [0.0]
+            states.append(PlateDetection(
+                bbox=t.bbox, text=t.confirmed,
+                confidence=sum(confs) / len(confs), track_id=t.id,
+            ))
+            if (
+                t.confirmed != t.emitted
+                or now - t.last_emit >= self._emit_ttl
+            ):
+                t.emitted = t.confirmed
+                t.last_emit = now
+                events.append(states[-1])
+        return states, events
 
 
-# Backward-compatible alias
-_PlateAccumulator = PlateAccumulator
+# Backward-compatible alias (pre-tracker name kept for older imports)
+_PlateTracker = PlateTracker
 
 
 # ---------------------------------------------------------------------------
@@ -294,16 +442,18 @@ def parse_yolo_grid(
                     detections.append((cx - w / 2, cy - h / 2, w, h, conf))
 
     detections.sort(key=lambda d: d[4], reverse=True)
-    keep: List[Tuple[float, float, float, float]] = []
+    # 5-tuples: (x, y, w, h, conf) — callers that only need geometry
+    # slice b[:4]; conf rides along for candidate gating in app.py.
+    keep: List[Tuple[float, float, float, float, float]] = []
     for det in detections:
-        bx, by, bw, bh, _ = det
+        bx, by, bw, bh = det[:4]
         suppressed = False
-        for kx, ky, kw, kh in keep:
+        for kx, ky, kw, kh, _ in keep:
             if iou(bx, by, bw, bh, kx, ky, kw, kh) > 0.45:
                 suppressed = True
                 break
         if not suppressed:
-            keep.append((bx, by, bw, bh))
+            keep.append(det)
     return keep[:32]
 
 
@@ -371,7 +521,7 @@ PLATE_MARGIN_Y = 0.35
 
 
 def plate_crop_rects(
-    bboxes: List[Tuple[float, float, float, float]],
+    bboxes: List[Tuple[float, ...]],
     frame_w: int,
     frame_h: int,
     target_w: int,
@@ -383,10 +533,12 @@ def plate_crop_rects(
     coordinate and size (the DSP service requires even NV12 crop geometry —
     at most a 1-pixel difference from the CPU path). Degenerate boxes map
     to ``None`` so the caller can substitute a filled canvas. Output order
-    matches ``bboxes``.
+    matches ``bboxes``; entries may be 4-tuples or parse_yolo_grid's
+    5-tuples (x, y, w, h, conf) — trailing fields are ignored.
     """
     rects: List[Optional[Tuple[int, int, int, int, int, int]]] = []
-    for x, y, w, h in bboxes:
+    for box in bboxes:
+        x, y, w, h = box[:4]
         x1 = max(0, int((x - w * PLATE_MARGIN_X) * frame_w)) & ~1
         y1 = max(0, int((y - h * PLATE_MARGIN_Y) * frame_h)) & ~1
         x2 = min(frame_w, int((x + w + w * PLATE_MARGIN_X) * frame_w)) & ~1
@@ -463,7 +615,10 @@ def decode_recognition(
     logits = np.asarray(raw[-1], dtype=np.float32)
     if logits.ndim == 1:
         total = logits.size
-        num_classes = blank + 1  # model output dim includes blank token
+        # Full class table: dict chars + blank + space (e.g. 18385 for
+        # ppocrv5). The old blank+1 guess reshaped a 40*18385 flat output
+        # as 40*1 columns, collapsing every timestep into one class row.
+        num_classes = len(charset)
         if total % num_classes == 0:
             seq_len = total // num_classes
             logits = logits.reshape(1, seq_len, num_classes)

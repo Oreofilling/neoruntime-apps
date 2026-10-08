@@ -147,20 +147,27 @@ def _allowed_file(filename: str) -> bool:
 def _build_hd_preview(req: Any) -> Dict[str, Any]:
     """Build the HD 1080P preview config injected into the template.
 
-    Reuses the platform-api hardware H.264 stream
-    (``ws://<lan-ip>:<port>/api/v1/h264/main``) decoded in the browser via MSE,
-    so 1080P preview costs zero Python CPU. The host is taken from the request
-    the browser used to reach us, so it is correct regardless of which LAN
-    address was accessed. ``PLATFORM_API_TOKEN`` is forwarded as ``?token=``
-    for platform-api token auth; omit it when auth is disabled.
+    Reuses the platform-api hardware H.264 stream decoded in the browser via
+    MSE, so 1080P preview costs zero Python CPU. The URL defaults to
+    ``wss://<page-host>:443`` — same host the browser already reached us
+    through (the web console's nginx proxies ``/api/`` to platform-api; this
+    is gym-ops' proven route). platform-api's own http_addr is loopback-only
+    on this stack, so a direct ``ws://host:8080`` is TCP-refused from the
+    LAN; override PLATFORM_API_WS_SCHEME/PLATFORM_API_PORT only on stacks
+    without the console proxy. ``PLATFORM_API_TOKEN`` is forwarded as
+    ``?token=``; when app-manager leaves ``${AIPC_TOKEN_KEY}`` unexpanded the
+    token cannot authenticate, so HD is reported disabled and the page stays
+    on MJPEG (the frontend still prove-then-switches as a second guard).
     """
     host = (req.host or "").rsplit(":", 1)[0] or "127.0.0.1"
-    port = int(os.environ.get("PLATFORM_API_PORT", "8080"))
+    scheme = os.environ.get("PLATFORM_API_WS_SCHEME", "wss")
+    port = int(os.environ.get("PLATFORM_API_PORT", "443"))
     token = os.environ.get("PLATFORM_API_TOKEN", "")
-    ws_url = f"ws://{host}:{port}/api/v1/h264/main"
-    if token:
-        ws_url += "?token=" + token
-    enabled = os.environ.get("HD_PREVIEW_ENABLED", "1") != "0"
+    token_ok = bool(token) and "${" not in token
+    ws_url = ""
+    if token_ok:
+        ws_url = f"{scheme}://{host}:{port}/api/v1/h264/main?token=" + token
+    enabled = os.environ.get("HD_PREVIEW_ENABLED", "1") != "0" and token_ok
     return {"enabled": enabled, "wsUrl": ws_url, "token": token}
 
 
