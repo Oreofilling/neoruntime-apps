@@ -1,0 +1,2 @@
+# Keep tool caches out of the image (COPY models/ picks these up otherwise)
+models/.ruff_cache

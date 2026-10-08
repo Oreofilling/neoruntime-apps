@@ -1,6 +1,7 @@
 """Unit tests for parking-lot post-processing logic.
 
-Tests anti-spoofing depth analysis, CTC decoder, OCR accumulator,
+Tests anti-spoofing depth analysis, CTC decoder (incl. the real 18385-class
+PaddleOCR v5 dictionary), plate validation, per-track temporal voting,
 NMS parsing, and YOLO grid decoding with synthetic numpy arrays.
 """
 
@@ -11,14 +12,19 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from parking_lot.config import LPR_CHARSET, LPR_CTC_BLANK
 from parking_lot.postprocess import (
     ctc_greedy_decode,
-    PlateAccumulator,
+    PlateTracker,
+    center_in_boxes,
+    decode_recognition,
+    iou_xywh,
     parse_nms_raw,
     parse_yolo_grid,
     iou,
     letterbox_crop,
     plate_crop_rects,
+    validate_plate_text,
     analyze_depth_spoof,
     SpoofResult,
 )
@@ -134,38 +140,250 @@ class TestCTCGreedyDecode:
 
 
 # ---------------------------------------------------------------------------
-# Plate Accumulator (temporal smoothing)
+# Plate text validation (structural sanity before a read can confirm)
 # ---------------------------------------------------------------------------
 
-class TestPlateAccumulator:
-    def test_single_read_passes_through(self) -> None:
-        acc = PlateAccumulator(window_size=5, min_confidence=0.7)
-        text, conf = acc.update("A12345", 0.9)
-        assert text == "A12345"
+class TestValidatePlateText:
+    def test_standard_cn_plate(self) -> None:
+        assert validate_plate_text("京A12345") is True
 
-    def test_majority_vote(self) -> None:
-        acc = PlateAccumulator(window_size=5, min_confidence=0.7)
-        acc.update("A12345", 0.8)
-        acc.update("A12345", 0.85)
-        acc.update("B67890", 0.9)
-        acc.update("A12345", 0.75)
-        text, conf = acc.update("A12345", 0.8)
-        assert text == "A12345"
+    def test_new_energy_8_char(self) -> None:
+        assert validate_plate_text("粤B678901") is True
 
-    def test_low_confidence_ignored(self) -> None:
-        acc = PlateAccumulator(window_size=5, min_confidence=0.7)
-        acc.update("A12345", 0.9)
-        text, conf = acc.update("", 0.3)
-        assert text == "A12345"
+    def test_middot_and_spaces_stripped(self) -> None:
+        assert validate_plate_text("京A·12345") is True
+        assert validate_plate_text("京A 12345") is True
 
-    def test_window_size_limit(self) -> None:
-        acc = PlateAccumulator(window_size=3, min_confidence=0.7)
-        acc.update("A11111", 0.9)
-        acc.update("B22222", 0.9)
-        acc.update("C33333", 0.9)
-        acc.update("D44444", 0.9)
-        text, conf = acc.update("D44444", 0.9)
-        assert text == "D44444"
+    def test_lenient_ascii_fallback(self) -> None:
+        # No province char recognized — plain alphanumeric still passes.
+        assert validate_plate_text("A12345") is True
+
+    def test_reject_empty_and_question_marks(self) -> None:
+        assert validate_plate_text("") is False
+        assert validate_plate_text("京A?2345") is False
+
+    def test_reject_too_short_and_too_long(self) -> None:
+        assert validate_plate_text("京A12") is False    # 4 chars
+        assert validate_plate_text("A123456789") is False  # 10 chars
+
+    def test_reject_bad_body_after_province(self) -> None:
+        # Second char must be an ascii letter, not a digit.
+        assert validate_plate_text("京12345") is False
+
+    def test_reject_non_alnum_body(self) -> None:
+        assert validate_plate_text("京A1234!") is False
+
+
+# ---------------------------------------------------------------------------
+# Geometry helpers for candidate gating / tracking
+# ---------------------------------------------------------------------------
+
+class TestIouXywh:
+    def test_perfect_overlap(self) -> None:
+        assert iou_xywh((0.1, 0.1, 0.2, 0.1), (0.1, 0.1, 0.2, 0.1)) == pytest.approx(1.0)
+
+    def test_no_overlap(self) -> None:
+        assert iou_xywh((0.0, 0.0, 0.1, 0.1), (0.5, 0.5, 0.1, 0.1)) == pytest.approx(0.0)
+
+    def test_partial_overlap(self) -> None:
+        v = iou_xywh((0.0, 0.0, 0.2, 0.1), (0.1, 0.0, 0.2, 0.1))
+        assert 0.3 < v < 0.7
+
+
+class TestCenterInBoxes:
+    def test_inside(self) -> None:
+        assert center_in_boxes(0.15, 0.15, [(0.1, 0.1, 0.2, 0.2)]) is True
+
+    def test_outside_all(self) -> None:
+        assert center_in_boxes(0.9, 0.9, [(0.1, 0.1, 0.2, 0.2)]) is False
+
+    def test_empty_boxes(self) -> None:
+        assert center_in_boxes(0.5, 0.5, []) is False
+
+
+# ---------------------------------------------------------------------------
+# PlateTracker — per-track IoU temporal voting (replaces the 1.2.4-era
+# single global accumulator whose shared history cross-polluted plates)
+# ---------------------------------------------------------------------------
+
+class TestPlateTracker:
+    @staticmethod
+    def _tracker(**kw) -> PlateTracker:
+        defaults = dict(
+            iou_threshold=0.25, confirm_votes=2, vote_window=5,
+            min_vote_conf=0.7, track_ttl=2.0, emit_ttl=30.0,
+        )
+        defaults.update(kw)
+        return PlateTracker(**defaults)
+
+    def test_two_plates_do_not_cross_pollute(self) -> None:
+        """The headline 1.2.4 bug: global history returned plate A's text
+        for plate B's box (and kept returning stale text on empty frames)."""
+        tr = self._tracker()
+        a, b = (0.10, 0.60, 0.12, 0.05), (0.60, 0.62, 0.12, 0.05)
+        for t in range(3):
+            states, _ = tr.update(
+                [(a, "京A12345", 0.9), (b, "粤B67890", 0.9)], now=float(t))
+        texts = {s.text for s in states}
+        assert texts == {"京A12345", "粤B67890"}
+        # Empty frame must NOT resurrect either plate (old accumulator did).
+        # now jumps past track_ttl -> both tracks expire.
+        states, events = tr.update([], now=10.0)
+        assert states == [] and events == []
+
+    def test_two_consistent_votes_confirm_and_emit(self) -> None:
+        tr = self._tracker()
+        box = (0.1, 0.1, 0.1, 0.05)
+        states, events = tr.update([(box, "京A12345", 0.9)], now=0.0)
+        assert states == [] and events == []  # 1 vote is not enough
+        states, events = tr.update([(box, "京A12345", 0.9)], now=0.1)
+        assert [s.text for s in states] == ["京A12345"]
+        assert [e.text for e in events] == ["京A12345"]
+
+    def test_low_confidence_votes_ignored(self) -> None:
+        tr = self._tracker()
+        box = (0.1, 0.1, 0.1, 0.05)
+        for t in range(5):
+            states, _ = tr.update([(box, "京A12345", 0.5)], now=float(t))
+        assert states == []  # never confirmed without >=0.7 conf votes
+
+    def test_invalid_text_never_confirms(self) -> None:
+        tr = self._tracker()
+        box = (0.1, 0.1, 0.1, 0.05)
+        for t in range(5):
+            states, _ = tr.update([(box, "AB", 0.99)], now=float(t))
+        assert states == []  # fails validate_plate_text -> no confirm
+
+    def test_track_expires_after_ttl(self) -> None:
+        tr = self._tracker()
+        box = (0.1, 0.1, 0.1, 0.05)
+        tr.update([(box, "京A12345", 0.9)], now=0.0)
+        states, _ = tr.update([(box, "京A12345", 0.9)], now=0.5)
+        assert states  # confirmed while alive
+        # > track_ttl (2.0s) since last_seen with no detection -> gone.
+        states, _ = tr.update([], now=5.0)
+        assert states == []
+
+    def test_emit_ttl_gates_duplicate_events(self) -> None:
+        tr = self._tracker()
+        box = (0.1, 0.1, 0.1, 0.05)
+        tr.update([(box, "京A12345", 0.9)], now=0.0)
+        _, events = tr.update([(box, "京A12345", 0.9)], now=1.0)
+        assert len(events) == 1           # confirmation emits once
+        # Keep the track alive (1 s cadence << track_ttl) with the same
+        # text: no re-emit until emit_ttl (30 s) since last_emit elapses.
+        for t in range(2, 31):
+            _, events = tr.update([(box, "京A12345", 0.9)], now=float(t))
+            assert events == [], f"unexpected re-emit at t={t}"
+        _, events = tr.update([(box, "京A12345", 0.9)], now=31.0)
+        assert len(events) == 1           # 31-1 == 30 >= emit_ttl: refresh
+
+    def test_corrected_read_reemits_immediately(self) -> None:
+        tr = self._tracker()
+        box = (0.1, 0.1, 0.1, 0.05)
+        for t in range(5):
+            tr.update([(box, "京A12345", 0.9)], now=float(t))
+        # Window slides until the new votes win the majority; the frame the
+        # confirmed text corrects must emit an event right away.
+        emitted_correction = False
+        for t in range(5, 10):
+            states, events = tr.update([(box, "京A12346", 0.9)], now=float(t))
+            if events:
+                assert states[0].text == events[0].text == "京A12346"
+                emitted_correction = True
+        assert emitted_correction
+        assert states and states[0].text == "京A12346"
+
+    def test_same_box_new_track_after_gap(self) -> None:
+        """A car leaves and another parks in the same spot: the stale
+        track must not force the old plate onto the new one."""
+        tr = self._tracker()
+        box = (0.1, 0.1, 0.1, 0.05)
+        tr.update([(box, "京A12345", 0.9)], now=0.0)
+        tr.update([(box, "京A12345", 0.9)], now=0.5)
+        # Gap > ttl, then a different plate in the same place.
+        states, events = tr.update([(box, "沪C88888", 0.9)], now=10.0)
+        assert states == []  # fresh track: single vote not confirmed
+        states, _ = tr.update([(box, "沪C88888", 0.9)], now=10.5)
+        assert [s.text for s in states] == ["沪C88888"]
+
+    def test_track_ids_are_stable_and_distinct(self) -> None:
+        tr = self._tracker()
+        a, b = (0.10, 0.60, 0.12, 0.05), (0.60, 0.62, 0.12, 0.05)
+        tr.update([(a, "京A12345", 0.9), (b, "粤B67890", 0.9)], now=0.0)
+        states, _ = tr.update([(a, "京A12345", 0.9), (b, "粤B67890", 0.9)], now=0.1)
+        ids = sorted(s.track_id for s in states)
+        assert ids == [1, 2]
+        # B disappears while A keeps being observed: once B is unseen past
+        # track_ttl it is dropped, and A keeps its original id (IoU match,
+        # not a fresh track).
+        states = []
+        for t in (0.2, 0.5, 1.0, 1.5, 2.0, 2.5):
+            states, _ = tr.update([(a, "京A12345", 0.9)], now=float(t))
+        assert [s.track_id for s in states] == [1]
+
+    def test_reset_forgets_everything(self) -> None:
+        tr = self._tracker()
+        box = (0.1, 0.1, 0.1, 0.05)
+        tr.update([(box, "京A12345", 0.9)], now=0.0)
+        tr.update([(box, "京A12345", 0.9)], now=0.1)
+        tr.reset()
+        states, _ = tr.update([(box, "京A12345", 0.9)], now=0.2)
+        assert states == []  # history wiped; needs 2 fresh votes again
+
+
+# ---------------------------------------------------------------------------
+# Real PaddleOCR v5 dictionary (18385 classes, blank=0 layout)
+# ---------------------------------------------------------------------------
+
+class TestRealDictCharset:
+    def test_full_table_layout(self) -> None:
+        # PaddleOCR CTCLabelDecode with use_space_char=True:
+        # ["blank"] + dict(18383) + [" "] == 18385 entries, blank at 0.
+        assert len(LPR_CHARSET) == 18385
+        assert LPR_CTC_BLANK == 0
+        assert LPR_CHARSET[0] == ""       # blank placeholder, never emitted
+        assert LPR_CHARSET[-1] == " "
+        assert LPR_CHARSET[1] == "　"  # dict's first char (ideographic space)
+
+    def test_decode_cn_plate_from_full_table(self) -> None:
+        text = "京A12345"
+        idx = [LPR_CHARSET.index(ch) for ch in text]
+        assert all(i > 0 for i in idx)  # no blanks in the path
+        logits = np.full((len(text), len(LPR_CHARSET)), -1.0, dtype=np.float32)
+        for t, i in enumerate(idx):
+            logits[t, i] = 1.0
+        out, conf = ctc_greedy_decode(logits, LPR_CHARSET, blank=LPR_CTC_BLANK)
+        assert out == text
+        assert conf > 0.9
+
+    def test_flatten_path_num_classes_from_charset(self) -> None:
+        """decode_recognition on a FLAT raw output: the reshape must use
+        len(charset) (18385), not blank+1 — the 1.2.4 bug collapsed every
+        timestep into one class column and decoded garbage."""
+        text = "京A12345"
+        idx = [LPR_CHARSET.index(ch) for ch in text]
+        logits = np.full((len(text), len(LPR_CHARSET)), -1.0, dtype=np.float32)
+        for t, i in enumerate(idx):
+            logits[t, i] = 1.0
+
+        class RawOnly:
+            ocr_lines = []
+            raw_outputs = [logits.flatten()]
+
+        out, conf = decode_recognition(RawOnly(), LPR_CHARSET, blank=LPR_CTC_BLANK)
+        assert out == text
+
+    def test_ocr_lines_preferred_over_raw(self) -> None:
+        class WithLines:
+            class _Line:
+                text = "沪B99999"
+                confidence = 0.95
+            ocr_lines = [_Line()]
+            raw_outputs = [np.zeros((4, len(LPR_CHARSET)), dtype=np.float32)]
+
+        out, conf = decode_recognition(WithLines(), LPR_CHARSET, blank=LPR_CTC_BLANK)
+        assert (out, conf) == ("沪B99999", 0.95)
 
 
 # ---------------------------------------------------------------------------
@@ -276,6 +494,16 @@ class TestPlateCropRects:
         assert rects[1] is None
         assert rects[0] is not None and rects[2] is not None
 
+    def test_accepts_parse_yolo_grid_5_tuples(self) -> None:
+        # Since 1.2.5 parse_yolo_grid returns (x, y, w, h, conf); the
+        # trailing conf must be ignored by geometry, not unpacked.
+        rect = plate_crop_rects(
+            [(0.30, 0.40, 0.20, 0.10, 0.192)], self.FRAME_W, self.FRAME_H,
+            self.TARGET_W, self.TARGET_H,
+        )[0]
+        assert rect is not None
+        assert rect[4:] == (self.TARGET_W, self.TARGET_H)
+
 
 # ---------------------------------------------------------------------------
 # NMS raw parsing
@@ -361,10 +589,22 @@ class TestParseYoloGrid:
         })
         boxes = parse_yolo_grid(self._result(tensors), "license_plate_det")
         assert len(boxes) == 1
-        x, y, w, h = boxes[0]
+        # 5-tuples since 1.2.5: conf rides along for candidate gating.
+        x, y, w, h, conf = boxes[0]
+        assert conf == pytest.approx(0.40 * 0.48, abs=1e-3)
         # grid1 anchor 1 = (37, 58): w = 37*0.5/416, cx = 10.5/26.
         assert x == pytest.approx(10.5 / 26 - (37 * 0.5 / 416) / 2, abs=1e-3)
         assert y == pytest.approx(16.5 / 26 - (58 * 0.5 / 416) / 2, abs=1e-3)
+
+    def test_boxes_carry_conf_sorted_desc(self) -> None:
+        # Two non-overlapping cells: higher conf first, conf preserved per box.
+        tensors = self._make_raw_outputs({
+            0: [(6, 6, 0, (0.5, 0.5, 0.5, 0.5, 0.40, 0.60))],   # conf .24
+            1: [(16, 10, 1, (0.5, 0.5, 0.5, 0.5, 0.40, 0.48))],  # conf .192
+        })
+        boxes = parse_yolo_grid(self._result(tensors), "license_plate_det")
+        assert len(boxes) == 2
+        assert boxes[0][4] > boxes[1][4]
 
     def test_background_obj_suppressed(self) -> None:
         # Below the obj>=0.3 pre-gate: never a detection, whatever cls.

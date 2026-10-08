@@ -276,6 +276,7 @@
       if (data.vehicles > 0) badges.push(`<span class="badge badge-vehicle">${data.vehicles} vehicles</span>`);
       if (data.plates > 0) badges.push(`<span class="badge badge-plate">${data.plates} plates</span>`);
       if (data.alerts > 0) badges.push(`<span class="badge badge-alert">${data.alerts} alerts</span>`);
+      if (hdFallback) badges.push(`<span class="badge badge-alert">HD preview unavailable · MJPEG</span>`);
       streamBadgesEl.innerHTML = badges.join('');
     }
 
@@ -357,6 +358,8 @@
     const hdOverlayCtx = hdOverlayCanvas.getContext('2d');
     const hdPreviewConfig = window.HD_PREVIEW || { enabled: false };
     let hdActive = false;        // MSE player currently running
+    let hdVisible = false;       // HD <video> actually decoding (prove-then-switch)
+    let hdFallback = false;      // HD gave up (ws auth/unreachable) → stay MJPEG
     let latestDetection = null;  // most recent SSE payload, redrawn on resize
 
     // ── minimal H264→fMP4 muxer (ported from web/.../MSE/utils/h264ToMp4.ts) ──
@@ -439,6 +442,11 @@
       var firstPts, lastPts, fps = 30, nextTs = 0;
       var queue = [], url = '', active = false, destroyed = false;
       var mseOpen = false, retryTimer = null, mseErrs = 0, restartTimer = null;
+      // Prove-then-switch/give-up state: cbs.onFirstFrame fires once the first
+      // media segment is appended; 3 consecutive ws connects that deliver no
+      // message at all (e.g. platform-api 401 without a token) or >5 MSE
+      // errors call cbs.onGiveUp so the page can stay on the MJPEG preview.
+      var cbs = null, notifiedFirst = false, gotMsgThisConnect = false, deadConnects = 0;
 
       function eqArr(a, b) { if (!a || !b || a.length !== b.length) return false; for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false; return true; }
       function codecFromSps(s) { function h2(n) { return ('0' + n.toString(16)).slice(-2); } return 'avc1.' + h2(s[1]) + h2(s[2]) + h2(s[3]); }
@@ -481,7 +489,16 @@
           }
         } catch (e) {}
       }
-      function onMseError() { if (destroyed || !active) return; mseErrs++; if (mseErrs > 5) return; scheduleRestart(); }
+      function onMseError() { if (destroyed || !active) return; mseErrs++; if (mseErrs > 5) { giveUp(); return; } scheduleRestart(); }
+      function giveUp() {
+        if (destroyed || !active) return;
+        active = false;
+        if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+        if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
+        if (ws) { ws.onclose = null; ws.onerror = null; ws.onmessage = null; try { ws.close(); } catch (e) {} ws = null; }
+        teardownMse();
+        if (cbs && cbs.onGiveUp) { try { cbs.onGiveUp(); } catch (e) {} }
+      }
       function scheduleRestart() {
         if (restartTimer || destroyed || !active) return;
         restartTimer = setTimeout(function () { restartTimer = null; if (active && !destroyed) { teardownMse(); openMse(); if (url) connectWs(url); } }, 800);
@@ -498,6 +515,7 @@
       function onSourceOpen() { mseOpen = true; try { video.play(); } catch (e) {} }
 
       function feedFrame(nal, kf, pts) {
+        if (!notifiedFirst) { notifiedFirst = true; if (cbs && cbs.onFirstFrame) { try { cbs.onFirstFrame(); } catch (e) {} } }
         if (firstPts === undefined) firstPts = pts;
         if (lastPts !== undefined && pts > lastPts) { var d = pts - lastPts; if (d >= 1500 && d <= 18000) { var mf = Math.round(90000 / d); if (mf !== fps && mf >= 5 && mf <= 60) { fps = mf; if (muxer) muxer.setFps(mf); } } }
         lastPts = pts;
@@ -509,6 +527,7 @@
 
       function handleMsg(buf) {
         if (destroyed) return;
+        gotMsgThisConnect = true; deadConnects = 0;
         var dv = new DataView(buf), data, kf = false, pts = 0;
         if (buf.byteLength >= 10 && dv.getUint32(0, false) === 0xFFD8FF00) {
           // Keyframe is derived from the NAL type (IDR=5) below; the header
@@ -562,18 +581,25 @@
       }
 
       function connectWs(u) {
+        gotMsgThisConnect = false;
         try { ws = new WebSocket(u); } catch (e) { scheduleRestart(); return; }
         ws.binaryType = 'arraybuffer';
         ws.onmessage = function (ev) { handleMsg(ev.data); };
         ws.onopen = function () { mseErrs = 0; };
-        ws.onclose = function () { if (active && !destroyed) { retryTimer = setTimeout(function () { retryTimer = null; if (active && !destroyed && url) connectWs(url); }, 1200); } };
+        ws.onclose = function () {
+          if (!active || destroyed) return;
+          if (!gotMsgThisConnect) deadConnects++;
+          if (deadConnects >= 3) { giveUp(); return; }
+          retryTimer = setTimeout(function () { retryTimer = null; if (active && !destroyed && url) connectWs(url); }, 1200);
+        };
         ws.onerror = function () { try { ws.close(); } catch (e) {} };
       }
 
       return {
-        start: function (u) { url = u; active = true; destroyed = false; mseErrs = 0; resetDecoder(); sps = null; pps = null; openMse(); connectWs(u); },
+        start: function (u, c) { url = u; cbs = c || null; active = true; destroyed = false; mseErrs = 0; notifiedFirst = false; deadConnects = 0; resetDecoder(); sps = null; pps = null; openMse(); connectWs(u); },
         stop: function () {
           active = false;
+          cbs = null;
           if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
           if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
           if (ws) { ws.onclose = null; ws.onerror = null; ws.onmessage = null; try { ws.close(); } catch (e) {} ws = null; }
@@ -621,7 +647,7 @@
       ctx.fillText(text, x + 4, ty + 2);
     }
     function redrawOverlay() {
-      if (hdActive) drawBoxes(hdOverlayCtx, hdOverlayCanvas, latestDetection);
+      if (hdVisible) drawBoxes(hdOverlayCtx, hdOverlayCanvas, latestDetection);
       else drawBoxes(overlayCtx, overlayCanvas, latestDetection);
     }
     // MJPEG overlay backing store = displayed <img> box; HD overlay = video
@@ -640,17 +666,36 @@
     }
     // Live camera → HD MSE preview (if enabled + MSE supported); upload mode and
     // HD-disabled/MSE-missing stay on the MJPEG <img>. Both run the canvas overlay.
+    // Prove-then-switch: the MJPEG <img> stays visible until the HD stream
+    // actually decodes its first frame — a ws the browser can't use (platform-api
+    // 401 without a valid token, port unreachable from the client) then just
+    // falls back to MJPEG instead of leaving a black <video> forever.
     function enterHd() {
       if (!hdPreviewConfig || !hdPreviewConfig.enabled || !window.MediaSource) return;
-      streamImg.style.display = 'none';
-      overlayCanvas.style.display = 'none';
-      hdVideo.style.display = '';
-      hdOverlayCanvas.style.display = '';
-      if (!hdOverlayCanvas.width) { hdOverlayCanvas.width = 1920; hdOverlayCanvas.height = 1080; }
-      if (!hdActive) { hdActive = true; hdPlayer.start(hdPreviewConfig.wsUrl); }
-      sizeCanvases();
+      if (!hdActive) {
+        hdActive = true;
+        hdPlayer.start(hdPreviewConfig.wsUrl, {
+          onFirstFrame: function () {
+            hdVisible = true;
+            streamImg.style.display = 'none';
+            overlayCanvas.style.display = 'none';
+            hdVideo.style.display = '';
+            hdOverlayCanvas.style.display = '';
+            if (!hdOverlayCanvas.width) { hdOverlayCanvas.width = 1920; hdOverlayCanvas.height = 1080; }
+            sizeCanvases();
+          },
+          onGiveUp: function () {
+            hdActive = false;
+            hdFallback = true;
+            streamBadgesEl.innerHTML =
+              '<span class="badge badge-alert">HD preview unavailable · MJPEG</span>';
+            sizeCanvases();
+          }
+        });
+      }
     }
     function exitHd() {
+      hdVisible = false;
       if (hdActive) { hdPlayer.stop(); hdActive = false; }
       hdVideo.style.display = 'none';
       hdOverlayCanvas.style.display = 'none';
