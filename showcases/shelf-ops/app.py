@@ -35,6 +35,7 @@ import os
 import queue
 import re
 import shutil
+import signal
 import tempfile
 import threading
 import time
@@ -1368,6 +1369,20 @@ class ShelfOpsApp:
             pass
 
 
+def _handle_term(signum, _frame):
+    """Translate SIGTERM into the normal shutdown path.
+
+    The container runs this module as PID 1, and the kernel ignores
+    default-disposition signals for PID 1: without an explicit handler,
+    containerd's SIGTERM never reaches Python and every app-manager stop
+    degrades to the full grace-timeout wait followed by SIGKILL (measured
+    on device: 30s hang, exit 137). Raising SystemExit from the handler
+    unwinds werkzeug's serve_forever select just like Ctrl-C does.
+    """
+    logger.info("received %s, shutting down", signal.Signals(signum).name)
+    raise SystemExit(0)
+
+
 def main() -> None:
     cfg = load_config()
     logging.basicConfig(
@@ -1377,13 +1392,21 @@ def main() -> None:
     logger.info("shelf-ops starting (clip=%s port=%d)",
                 cfg.clip_model, cfg.web_port)
 
+    signal.signal(signal.SIGTERM, _handle_term)
     app = ShelfOpsApp(cfg)
     app.start()
     try:
         app.app.run(host="0.0.0.0", port=cfg.web_port, threaded=True,
                     use_reloader=False)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("web server stopped")
+    finally:
+        # shutdown() is bounded (per-thread join <= 2s) but a non-daemon
+        # thread or a slow close would still stall interpreter exit and
+        # push container stop back into the kill-timeout path — exit
+        # deterministically once best-effort cleanup has run.
         app.shutdown()
+        os._exit(0)
 
 
 if __name__ == "__main__":

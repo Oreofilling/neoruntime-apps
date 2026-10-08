@@ -10,6 +10,7 @@ Features:
 """
 
 import os
+import signal
 import time
 from collections import deque
 from neoruntime_ipc_sdk import InferenceClient, EventClient, DeviceClient
@@ -74,8 +75,8 @@ class PeopleCountingApp:
                 fps=10
             ):
                 self.process_frame(frame, result)
-                
-        except KeyboardInterrupt:
+
+        except (KeyboardInterrupt, SystemExit):
             print("\n[PeopleCounter] Received exit signal")
         except Exception as e:
             print(f"[PeopleCounter] Error: {e}")
@@ -155,10 +156,28 @@ class PeopleCountingApp:
         self.device.close()
 
 
+def _handle_term(signum, _frame):
+    """Translate SIGTERM into the normal shutdown path.
+
+    The container runs this module as PID 1, and the kernel ignores
+    default-disposition signals for PID 1: without an explicit handler,
+    containerd's SIGTERM never reaches Python and every app-manager stop
+    degrades to the grace-timeout wait followed by SIGKILL. The subscribe
+    iterator yields at ~10 fps, so the raised SystemExit unwinds run()'s
+    loop (and its cleanup) within a frame of the signal arriving.
+    """
+    print("[PeopleCounter] Received SIGTERM, shutting down", flush=True)
+    raise SystemExit(0)
+
+
 def main():
     """Main function"""
+    signal.signal(signal.SIGTERM, _handle_term)
     app = PeopleCountingApp()
     app.run()
+    # Exit deterministically: a stalled SDK close inside cleanup() must not
+    # push container stop back into the kill-timeout path.
+    os._exit(0)
 
 
 if __name__ == "__main__":

@@ -4,12 +4,12 @@ kind: Application
 metadata:
   id: people_counting
   name: People Counting
-  version: 1.0.0
+  version: 1.0.1
   description: Count people in the scene and send alerts when threshold exceeded
   author: NeoRuntime
 
 spec:
-  image: neoruntime/people-counting:1.0.0
+  image: neoruntime/people-counting:1.0.1
 
   resources:
     cpu: "50%"
@@ -19,11 +19,12 @@ spec:
   # pinned Hailo model zoo compile) so installs are plug-and-play. The id is
   # auto-authorized for inference; the resolved id is injected at runtime as
   # AIPC_MODEL_detector. A device that already has the id uses its own copy.
+  # (spec.models no longer declares a postprocess type: bundled models take
+  # it from AMPK package metadata or the device's existing model row.)
   models:
     detector:
       id: person_v1
-      path: /opt/aipc/models/person_v1.hef
-      type: detection
+      path: /opt/aipc/models/person_v1.bin
       required: true
 
   permissions:
