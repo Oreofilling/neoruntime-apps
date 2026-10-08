@@ -1,0 +1,77 @@
+# SDK Teaching Demo — ONE installable interactive teaching app.
+# Browser single page on port 8090 (direct or via the console's
+# /apps/sdk-teaching-demo/ reverse proxy) with five interactive
+# stations: B-form live detection, dual render paths (local draw vs
+# platform overlay), hardware routing, A-form StreamPipeline, events.
+#
+# Permissions are the union of what the five stations need:
+#   video main+third+sub  — subscribe third for inference; annotate the
+#     console's main stream (normalized coords transfer across streams
+#     sharing the FOV).
+#   inference.allow_register_model — runtime register_model() like the
+#     SDK examples; deliberately NO `models:` preload list (that would
+#     turn into a start-time preload requirement).
+#   events.publish inference/main — the overlay path rides that topic;
+#     app/sdk-teaching-demo/* — the app's own detection events.
+
+apiVersion: v1
+kind: Application
+
+metadata:
+  id: sdk-teaching-demo
+  name: SDK Teaching Demo
+  version: 1.2.0
+  description: Interactive single-page teaching app for neoruntime-ipc-sdk (B-form, overlay paths, routing, A-form, events, in-page real-code teaching panels)
+  author: NeoRuntime Team
+
+spec:
+  image: neoruntime/sdk-teaching-demo:1.2.0
+
+  # Host model store — register paths must be host-real for ai-runtime.
+  # The image also bundles the vendored HEF under /opt/aipc/bundled-models
+  # as the fallback source (never the flat /data/aipc/models/ root: some
+  # devices keep a DIFFERENT compile of the same filename there).
+  volumes:
+    - host: /data/aipc/models
+      container: /data/aipc/models
+      readonly: true
+
+  resources:
+    cpu: "50%"
+    memory: 256Mi
+
+  permissions:
+    video:
+      - main.raw
+      - third.raw
+      - sub.raw
+    inference:
+      allow_register_model: true
+    events:
+      publish:
+        - inference/main
+        - app/sdk-teaching-demo/*
+
+    network:
+      mode: host
+      inbound:
+        - 8090
+
+  env:
+    - name: STREAM_ID
+      value: "third"
+    - name: OVERLAY_STREAM
+      value: "main"
+    - name: HTTP_PORT
+      value: "8090"
+
+  autostart: false
+  restart_policy: on-failure
+  restart_max_retries: 3
+
+  healthcheck:
+    enabled: true
+    interval: 30s
+    timeout: 5s
+    start_period: 10s
+    retries: 3

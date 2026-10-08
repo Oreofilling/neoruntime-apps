@@ -1,0 +1,853 @@
+<!doctype html>
+<!-- sdk-teaching-demo — interactive single-page teaching console.
+     Self-contained: inline CSS/JS, system fonts, zero external requests.
+     Dark by intent: this is a camera/console instrument panel; video
+     preview is the hero and needs a dim surround.
+     Bilingual: EN default, 中文 toggle (localStorage), data-i18n keys. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SDK Teaching Demo</title>
+<style>
+:root {
+  --bg: #101418;
+  --panel: #171d24;
+  --panel-2: #1d2530;
+  --line: #2a3542;
+  --text: #e8edf2;
+  --muted: #8b98a5;
+  --accent: #4fd1c5;        /* teal instrument light */
+  --accent-2: #f6ad55;      /* amber warning */
+  --danger: #fc8181;
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
+  --radius: 10px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+header {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 18px 22px 12px;
+  border-bottom: 1px solid var(--line);
+}
+header h1 { font-size: 19px; margin: 0; letter-spacing: .3px; }
+header .sub { color: var(--muted); font-size: 13px; }
+header .spacer { flex: 1; }
+#lang-btn {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+#lang-btn:hover { border-color: var(--accent); }
+
+main {
+  display: grid;
+  grid-template-columns: minmax(340px, 480px) minmax(360px, 1fr);
+  gap: 18px;
+  padding: 18px 22px 40px;
+  align-items: start;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+@media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+
+/* ---- left: live feed ---- */
+.feed-wrap { position: sticky; top: 14px; }
+@media (max-width: 860px) { .feed-wrap { position: static; } }
+.feed-frame {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: #000;
+  min-height: 200px;
+}
+#feed { display: block; width: 100%; }
+#feed.off { display: none; }
+.feed-placeholder {
+  display: none;
+  padding: 48px 16px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+}
+.feed-placeholder.show { display: block; }
+.feed-badge {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.feed-badge span {
+  background: rgba(10, 14, 18, .78);
+  border: 1px solid rgba(79, 209, 197, .5);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 2px 9px;
+  border-radius: 6px;
+}
+.feed-note { color: var(--muted); font-size: 12.5px; margin-top: 8px; }
+.feed-note code, .metric code, .note code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--accent);
+  background: var(--panel-2);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+/* ---- right: stations ---- */
+.station {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  margin-bottom: 16px;
+}
+.station-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.station-num {
+  font-family: var(--mono);
+  color: var(--accent);
+  font-size: 13px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 1px 7px;
+  background: var(--panel-2);
+}
+.station h2 { font-size: 16px; margin: 0; }
+.station .hood {
+  color: var(--muted);
+  font-size: 12.5px;
+  margin: 2px 0 12px;
+}
+.station .hood code, .metric code, .note code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--accent);
+  background: var(--panel-2);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.controls { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; }
+.ctl { display: flex; align-items: center; gap: 7px; font-size: 14px; }
+.ctl input[type=checkbox] { accent-color: var(--accent); width: 15px; height: 15px; }
+.ctl input[type=range] { accent-color: var(--accent); width: 130px; }
+
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.seg button {
+  background: var(--panel-2);
+  color: var(--muted);
+  border: 0;
+  padding: 5px 12px;
+  font-size: 13px;
+  font-family: var(--mono);
+  cursor: pointer;
+}
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button.on { background: var(--accent); color: #0a1512; font-weight: 600; }
+
+button.act {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+button.act:hover { border-color: var(--accent); }
+button.act.warn { border-color: var(--accent-2); color: var(--accent-2); }
+button.act.go { border-color: var(--accent); color: var(--accent); }
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+.metric {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 10px;
+}
+.metric .k { color: var(--muted); font-size: 11px; font-family: var(--mono); }
+.metric .v { font-size: 16px; font-family: var(--mono); margin-top: 1px; }
+.metric .v small { font-size: 11px; color: var(--muted); }
+.metric.warn .v { color: var(--accent-2); }
+
+table.ops { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12.5px; }
+table.ops th, table.ops td {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--mono);
+}
+table.ops th { color: var(--muted); font-weight: 500; }
+table.ops td.num, table.ops th.num { text-align: right; }
+
+pre.payload {
+  background: #0b0f13;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow-x: auto;
+  color: #bfe8e3;
+  margin: 10px 0 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.err-box {
+  color: var(--danger);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  margin-top: 8px;
+  display: none;
+}
+.err-box.show { display: block; }
+.note { color: var(--muted); font-size: 12.5px; margin-top: 10px; }
+
+/* ---- teaching panels (the real code behind each station) ---- */
+.teach {
+  margin-top: 14px;
+  border-top: 1px dashed var(--line);
+  padding-top: 10px;
+}
+.teach-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+.teach-head .t {
+  color: var(--muted);
+  font-size: 11.5px;
+  font-family: var(--mono);
+  letter-spacing: .4px;
+  text-transform: uppercase;
+}
+.copy-btn {
+  margin-left: auto;
+  background: var(--panel-2);
+  color: var(--accent);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-family: var(--mono);
+  cursor: pointer;
+}
+.copy-btn:hover { border-color: var(--accent); }
+pre.snippet {
+  background: #0b0f13;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-x: auto;
+  color: #bfe8e3;
+  margin: 8px 0 0;
+  white-space: pre;
+}
+.teach .why { color: var(--muted); font-size: 12.5px; margin: 8px 0 0; }
+.doc-links { margin: 10px 0 0; font-size: 12.5px; }
+.doc-links a { color: var(--accent); text-decoration: none; margin-right: 10px; }
+.doc-links a:hover { text-decoration: underline; }
+.err-lesson {
+  margin-top: 10px;
+  border: 1px solid rgba(246, 173, 85, .4);
+  background: rgba(246, 173, 85, .07);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+}
+.err-lesson .err-title {
+  color: var(--accent-2);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  margin-bottom: 4px;
+}
+.err-lesson > div { margin-top: 2px; }
+.next-steps h2 { margin: 0 0 8px; }
+.next-steps .next-step { margin: 4px 0; font-size: 13.5px; }
+
+/* toast */
+#toast {
+  position: fixed;
+  left: 50%;
+  bottom: 26px;
+  transform: translateX(-50%);
+  background: #2d1a1a;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  border-radius: 8px;
+  padding: 8px 18px;
+  font-size: 13.5px;
+  font-family: var(--mono);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .25s;
+  max-width: 86vw;
+}
+#toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>SDK Teaching Demo</h1>
+  <span class="sub" data-i18n="subtitle">one app, five hands-on lessons in the neoruntime-ipc-sdk</span>
+  <span class="spacer"></span>
+  <button id="lang-btn" type="button">中文</button>
+</header>
+
+<main>
+  <!-- ============ left: live feed ============ -->
+  <section class="feed-wrap" aria-label="live feed">
+    <div class="feed-frame">
+      <img id="feed" alt="live detection preview (MJPEG)">
+      <div class="feed-placeholder" id="feed-ph" data-i18n="feedOff">engine paused — turn it on in Station 1</div>
+      <div class="feed-badge">
+        <span id="badge-policy">—</span>
+        <span id="badge-fps">— fps</span>
+        <span id="badge-obj">— obj</span>
+      </div>
+    </div>
+    <p class="feed-note" data-i18n-html="feedNote">
+      pixels flow <em>through this app</em>: <code>FdMediaClient.subscribe("third")</code> →
+      <code>InferencePipeline</code> → <code>draw_detections</code> → MJPEG. Station 2
+      shows the path where they don't.
+    </p>
+  </section>
+
+  <!-- ============ right: stations ============ -->
+  <div class="stations">
+
+    <!-- Station 1 -->
+    <section class="station" id="s1">
+      <div class="station-head"><span class="station-num">1</span><h2 data-i18n="s1Title">Live detection — B form</h2></div>
+      <p class="hood" data-i18n-html="s1Hood">
+        the app owns the pixels: <code>media.subscribe("third", keep_fd=True)</code> →
+        <code>pipeline.run(frame)</code> → <code>draw_detections()</code> → JPEG.
+      </p>
+      <div class="controls">
+        <label class="ctl"><input type="checkbox" id="ctl-bform" checked> <span data-i18n="engine">engine</span></label>
+        <label class="ctl"><input type="checkbox" id="ctl-draw" checked> <span data-i18n="drawLocally">draw locally</span></label>
+        <label class="ctl"><span data-i18n="threshold">threshold</span>
+          <input type="range" id="ctl-score" min="0.05" max="0.9" step="0.05" value="0.4">
+          <code id="score-out" style="font-family:var(--mono);font-size:12px">0.40</code>
+        </label>
+      </div>
+      <div class="controls" id="label-row" style="margin-top:8px">
+        <span class="ctl" data-i18n="classes" style="color:var(--muted);font-size:13px">classes:</span>
+        <label class="ctl"><input type="checkbox" class="ctl-label" value="person" checked> person</label>
+        <label class="ctl"><input type="checkbox" class="ctl-label" value="vehicle" checked> vehicle</label>
+        <label class="ctl"><input type="checkbox" class="ctl-label" value="face"> face</label>
+        <label class="ctl"><input type="checkbox" class="ctl-label" value="license_plate"> license_plate</label>
+      </div>
+      <div class="metrics" id="s1-metrics"></div>
+      <p class="note" data-i18n-html="s1Note">
+        turn <code>draw locally</code> off: the raw frame passes through and JPEG encoding
+        itself routes through the hardware router — Station 3's counters move.
+      </p>
+    </section>
+
+    <!-- Station 2 -->
+    <section class="station" id="s2">
+      <div class="station-head"><span class="station-num">2</span><h2 data-i18n="s2Title">Render paths — who draws?</h2></div>
+      <p class="hood" data-i18n-html="s2Hood">
+        local draw vs <code>OverlayClient.annotate_result("main", result)</code>: the
+        platform draws on the console's <code>main</code> stream — zero pixels leave your app.
+      </p>
+      <div class="controls">
+        <span class="ctl" data-i18n="overlayPath" style="color:var(--muted);font-size:13px">overlay:</span>
+        <div class="seg" id="seg-overlay">
+          <button type="button" data-val="off" class="on">off</button>
+          <button type="button" data-val="platform">platform → main</button>
+        </div>
+        <label class="ctl"><input type="checkbox" id="ctl-zone"> <span data-i18n="zone">teaching zone polygon</span></label>
+      </div>
+      <div class="metrics" id="s2-metrics"></div>
+      <p class="note" data-i18n-html="s2Note">
+        every annotate carries <code>ttl_ms=1000</code> — boxes self-expire if the app
+        stops publishing. Watch the console's <code>main</code> player while toggling.
+      </p>
+    </section>
+
+    <!-- Station 3 -->
+    <section class="station" id="s3">
+      <div class="station-head"><span class="station-num">3</span><h2 data-i18n="s3Title">Hardware routing</h2></div>
+      <p class="hood" data-i18n-html="s3Hood">
+        <code>set_route_policy()</code> steers JPEG/draw ops between NPU/DSP/CPU;
+        deltas below are per-op counters since the last policy switch.
+      </p>
+      <div class="controls">
+        <div class="seg" id="seg-policy">
+          <button type="button" data-val="software_only">SOFTWARE_ONLY</button>
+          <button type="button" data-val="prefer_hardware" class="on">PREFER_HARDWARE</button>
+          <button type="button" data-val="hardware_only">HARDWARE_ONLY</button>
+        </div>
+        <button class="act warn" type="button" id="btn-refusal" data-i18n="refusalBtn">route a bogus op</button>
+      </div>
+      <table class="ops" id="ops-table">
+        <thead><tr>
+          <th>op</th><th>backend</th>
+          <th class="num">Δ hw</th><th class="num">Δ sw</th><th class="num">Δ fallbacks</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="err-box" id="refusal-out"></div>
+      <p class="note" data-i18n-html="s3Note">
+        <code>hardware_only</code> never silently falls back — a refused op raises.
+        That's the refusal demo: routing errors are loud, not swallowed.
+      </p>
+    </section>
+
+    <!-- Station 4 -->
+    <section class="station" id="s4">
+      <div class="station-head"><span class="station-num">4</span><h2 data-i18n="s4Title">A form — StreamPipeline</h2></div>
+      <p class="hood" data-i18n-html="s4Hood">
+        the platform subscribes, infers and draws on <code>third</code>; the app only
+        consumes results: <code>StreamPipeline("third", model, fps=10)</code>.
+      </p>
+      <div class="controls">
+        <button class="act go" type="button" id="btn-aform-start" data-i18n="start">start</button>
+        <button class="act" type="button" id="btn-aform-stop" data-i18n="stop">stop</button>
+      </div>
+      <div class="metrics" id="s4-metrics"></div>
+      <p class="note" data-i18n-html="s4Note">
+        geometry rule: platform-side feeding has no scaler, so the stream must equal
+        the model input — <code>third</code> (640×384) works, <code>main</code> 1080p
+        rejects every frame with DMA -2811.
+      </p>
+    </section>
+
+    <!-- Station 5 -->
+    <section class="station" id="s5">
+      <div class="station-head"><span class="station-num">5</span><h2 data-i18n="s5Title">Events</h2></div>
+      <p class="hood" data-i18n-html="s5Hood">
+        results republished with <code>EventClient.publish()</code> on
+        <code>app/sdk-teaching-demo/detection</code>, cooldown-gated.
+      </p>
+      <div class="metrics" id="s5-metrics"></div>
+      <pre class="payload" id="event-payload">—</pre>
+    </section>
+
+  </div>
+</main>
+
+<div id="toast" role="alert"></div>
+
+<script>
+"use strict";
+/* Every URL this page builds goes through appUrl(): under the console's
+   /apps/<id>/ reverse proxy, JS-built absolute URLs are NOT rewritten. */
+function appUrl(path) {
+  var m = window.location.pathname.match(/^(\/apps\/[^/]+)/);
+  return (m ? m[1] : "") + path;
+}
+
+/* ---- i18n: EN default, 中文 toggle, localStorage ---- */
+var I18N = {
+  en: {},
+  zh: {
+    subtitle: "一个 app，五节 neoruntime-ipc-sdk 动手课",
+    feedOff: "引擎已暂停 —— 在站点 1 打开",
+    feedNote: "像素<em>流经本 app</em>：<code>FdMediaClient.subscribe(\"third\")</code> → <code>InferencePipeline</code> → <code>draw_detections</code> → MJPEG。站点 2 展示像素不出 app 的路径。",
+    engine: "引擎", drawLocally: "本地画框", threshold: "阈值", classes: "类别:",
+    s1Title: "实时检测 —— B 形态",
+    s1Hood: "app 拥有像素：<code>media.subscribe(\"third\", keep_fd=True)</code> → <code>pipeline.run(frame)</code> → <code>draw_detections()</code> → JPEG。",
+    s1Note: "关掉<code>本地画框</code>：原始帧直通，JPEG 编码本身会走硬件路由器 —— 站点 3 的计数随之变化。",
+    s2Title: "渲染路径 —— 谁来画？",
+    s2Hood: "本地绘制 vs <code>OverlayClient.annotate_result(\"main\", result)</code>：平台在控制台 <code>main</code> 流上画 —— 零像素离开你的 app。",
+    overlayPath: "overlay:", zone: "教学区多边形",
+    s2Note: "每次 annotate 都带 <code>ttl_ms=1000</code> —— app 停止发布后框自过期。切换时盯住控制台的 <code>main</code> 播放器。",
+    s3Title: "硬件路由",
+    s3Hood: "<code>set_route_policy()</code> 在 NPU/DSP/CPU 之间调度 JPEG/绘制算子；下表增量自上次策略切换起算。",
+    refusalBtn: "路由一个不存在的算子",
+    s3Note: "<code>hardware_only</code> 绝不静默回落 —— 被拒算子直接抛错。这就是拒绝演示：路由错误是响亮的，不是被吞掉的。",
+    s4Title: "A 形态 —— StreamPipeline",
+    s4Hood: "平台侧订阅、推理并绘制于 <code>third</code>；app 只消费结果：<code>StreamPipeline(\"third\", model, fps=10)</code>。",
+    start: "启动", stop: "停止",
+    s4Note: "几何规则：平台侧喂帧没有缩放器，流尺寸必须等于模型输入 —— <code>third</code>（640×384）可用，<code>main</code> 1080p 每帧 DMA -2811 拒绝。",
+    s5Title: "事件",
+    s5Hood: "结果经 <code>EventClient.publish()</code> 重发布到 <code>app/sdk-teaching-demo/detection</code>，带冷却门。"
+  }
+};
+var lang = "en";
+
+function applyLang() {
+  var dict = I18N[lang];
+  document.querySelectorAll("[data-i18n]").forEach(function (el) {
+    var v = dict[el.getAttribute("data-i18n")];
+    if (v) el.textContent = v;
+  });
+  document.querySelectorAll("[data-i18n-html]").forEach(function (el) {
+    var v = dict[el.getAttribute("data-i18n-html")];
+    if (v) el.innerHTML = v;
+  });
+  document.documentElement.lang = lang;
+  document.getElementById("lang-btn").textContent = lang === "en" ? "中文" : "EN";
+  if (TEACH.data) renderTeach();  // teach panels are bilingual too
+}
+
+/* ---- helpers ---- */
+function $(id) { return document.getElementById(id); }
+
+var toastTimer = null;
+function toast(message) {
+  var t = $("toast");
+  t.textContent = message;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { t.classList.remove("show"); }, 4000);
+}
+
+function post(path, body) {
+  return fetch(appUrl(path), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {})
+  }).then(function (res) {
+    return res.json().then(function (env) {
+      if (!env.success) throw new Error(env.error || ("HTTP " + res.status));
+      return env.data;
+    });
+  }).catch(function (err) {
+    toast(String(err.message || err));
+    throw err;
+  });
+}
+
+function getJson(path) {
+  return fetch(appUrl(path)).then(function (res) { return res.json(); });
+}
+
+function setSetting(patch) {
+  return post("/api/settings", patch).then(renderSettings).catch(function () {});
+}
+
+function metric(key, value, warn) {
+  return '<div class="metric' + (warn ? " warn" : "") + '">'
+    + '<div class="k">' + key + '</div><div class="v">' + value + "</div></div>";
+}
+function fmt(v, unit, digits) {
+  if (v === null || v === undefined) return "—";
+  if (typeof v === "number" && digits !== undefined) return v.toFixed(digits) + (unit || "");
+  return v + (unit || "");
+}
+
+/* ---- controls -> API ---- */
+$("ctl-bform").addEventListener("change", function (e) { setSetting({ bform_on: e.target.checked }); });
+$("ctl-draw").addEventListener("change", function (e) { setSetting({ draw_on: e.target.checked }); });
+$("ctl-score").addEventListener("input", function (e) {
+  $("score-out").textContent = Number(e.target.value).toFixed(2);
+});
+$("ctl-score").addEventListener("change", function (e) { setSetting({ min_score: Number(e.target.value) }); });
+
+document.querySelectorAll(".ctl-label").forEach(function (box) {
+  box.addEventListener("change", function () {
+    var checked = Array.prototype.map.call(
+      document.querySelectorAll(".ctl-label:checked"), function (b) { return b.value; });
+    if (checked.length === 0) {
+      toast(lang === "zh" ? "至少保留一个类别" : "keep at least one class");
+      box.checked = true;
+      return;
+    }
+    setSetting({ labels: checked });
+  });
+});
+
+function segWire(id, field) {
+  var seg = $(id);
+  seg.querySelectorAll("button").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var patch = {}; patch[field] = btn.getAttribute("data-val");
+      setSetting(patch);
+    });
+  });
+}
+segWire("seg-overlay", "overlay_path");
+segWire("seg-policy", "policy");
+
+$("ctl-zone").addEventListener("change", function (e) { setSetting({ zone_on: e.target.checked }); });
+
+$("btn-refusal").addEventListener("click", function () {
+  post("/api/routing/refusal", {}).then(function (data) {
+    var box = $("refusal-out");
+    box.textContent = data.message;
+    box.classList.add("show");
+  }).catch(function () {});
+});
+
+$("btn-aform-start").addEventListener("click", function () { setSetting({ aform_on: true }); });
+$("btn-aform-stop").addEventListener("click", function () { setSetting({ aform_on: false }); });
+
+$("lang-btn").addEventListener("click", function () {
+  lang = lang === "en" ? "zh" : "en";
+  try { localStorage.setItem("teach-lang", lang); } catch (e) {}
+  applyLang();
+});
+
+/* ---- teaching panels: the real code behind each station ---- */
+var TEACH = { data: null };
+var TEACH_I18N = {
+  en: {
+    behind: "the real code behind this station",
+    copy: "copy", copied: "copied",
+    lesson: "error lesson", cause: "trap", contract: "contract",
+    docs: "docs:"
+  },
+  zh: {
+    behind: "本站背后的真实代码",
+    copy: "复制", copied: "已复制",
+    lesson: "错误课", cause: "坑", contract: "契约",
+    docs: "文档："
+  }
+};
+
+function el(tag, cls, text) {
+  var n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined && text !== null) n.textContent = text;
+  return n;
+}
+
+function link(label, url) {
+  var a = el("a", null, label);
+  a.href = url;
+  a.target = "_blank";
+  a.rel = "noreferrer";
+  return a;
+}
+
+/* the console serves plain http, so navigator.clipboard is unavailable —
+   fall back to the hidden-textarea + execCommand path */
+function copyText(text, btn) {
+  function fallback() {
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    var ok = false;
+    try { ok = document.execCommand("copy"); } catch (e) {}
+    document.body.removeChild(ta);
+    return ok;
+  }
+  function flash(ok) {
+    btn.textContent = TEACH_I18N[lang].copied;
+    setTimeout(function () { btn.textContent = TEACH_I18N[lang].copy; }, 1600);
+    if (!ok) toast(lang === "zh" ? "复制失败" : "copy failed");
+  }
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(
+      function () { flash(true); },
+      function () { flash(fallback()); });
+  } else {
+    flash(fallback());
+  }
+}
+
+function renderTeach() {
+  var d = TEACH.data;
+  if (!d) return;
+  var L = TEACH_I18N[lang];
+  d.stations.forEach(function (st) {
+    var host = document.getElementById(st.id);
+    if (!host) return;
+    var old = host.querySelector(".teach, .err-lesson");
+    while (old) { old.remove(); old = host.querySelector(".teach, .err-lesson"); }
+    var panel = el("div", "teach");
+    var head = el("div", "teach-head");
+    head.appendChild(el("span", "t", L.behind + " — " + st.file));
+    var btn = el("button", "copy-btn", L.copy);
+    btn.type = "button";
+    btn.addEventListener("click", function () { copyText(st.code, btn); });
+    head.appendChild(btn);
+    panel.appendChild(head);
+    var pre = el("pre", "snippet");
+    pre.textContent = st.code;
+    panel.appendChild(pre);
+    panel.appendChild(el("p", "why", st.note[lang]));
+    if (st.docs && st.docs.length) {
+      var links = el("p", "doc-links");
+      links.appendChild(document.createTextNode(L.docs + " "));
+      st.docs.forEach(function (pair) { links.appendChild(link(pair[0], pair[1])); });
+      panel.appendChild(links);
+    }
+    host.appendChild(panel);
+    (d.errors || []).filter(function (e) { return e.station === st.id; })
+      .forEach(function (e) {
+        var card = el("div", "err-lesson");
+        card.appendChild(el("div", "err-title", "⚠ " + L.lesson + ": " + e.title[lang]));
+        card.appendChild(el("div", null, L.cause + " — " + e.cause[lang]));
+        card.appendChild(el("div", null, L.contract + " — " + e.contract[lang]));
+        host.appendChild(card);
+      });
+  });
+  var wrap = document.querySelector(".stations");
+  var oldNext = document.getElementById("next-steps");
+  if (oldNext) oldNext.remove();
+  var nx = el("section", "station next-steps");
+  nx.id = "next-steps";
+  nx.appendChild(el("h2", null, d.next.title[lang]));
+  d.next.steps.forEach(function (s) { nx.appendChild(el("p", "next-step", s[lang])); });
+  var nl = el("p", "doc-links");
+  d.next.links.forEach(function (pair) { nl.appendChild(link(pair[0], pair[1])); });
+  nx.appendChild(nl);
+  wrap.appendChild(nx);
+}
+
+function fetchSnippets() {
+  getJson("/api/snippets").then(function (env) {
+    if (!env.success) throw new Error(env.error || "snippets unavailable");
+    TEACH.data = env.data;
+    renderTeach();
+  }).catch(function (err) {
+    /* panels are an enhancement — the live stations stand alone; keep a
+       trace so a broken payload is not invisible */
+    console.warn("teach panels unavailable:", err);
+  });
+}
+
+/* ---- status -> UI ---- */
+function renderSettings(s) {
+  $("ctl-bform").checked = s.bform_on;
+  $("ctl-draw").checked = s.draw_on;
+  $("ctl-zone").checked = s.zone_on;
+  $("ctl-score").value = s.min_score;
+  $("score-out").textContent = Number(s.min_score).toFixed(2);
+  document.querySelectorAll(".ctl-label").forEach(function (b) {
+    b.checked = s.labels.indexOf(b.value) !== -1;
+  });
+  document.querySelectorAll("#seg-overlay button").forEach(function (b) {
+    b.classList.toggle("on", b.getAttribute("data-val") === s.overlay_path);
+  });
+  document.querySelectorAll("#seg-policy button").forEach(function (b) {
+    b.classList.toggle("on", b.getAttribute("data-val") === s.policy);
+  });
+}
+
+function renderMetrics(st) {
+  var win = (st.bform.stats && st.bform.stats.last_window) || null;
+  $("badge-policy").textContent = st.settings.policy;
+  $("badge-fps").textContent = (win ? win.fps : "—") + " fps";
+  $("badge-obj").textContent = (win ? win.objects_per_frame : "—") + " obj";
+
+  var feed = $("feed"), ph = $("feed-ph");
+  var engineOn = st.settings.bform_on && st.bform.running;
+  feed.classList.toggle("off", !engineOn);
+  ph.classList.toggle("show", !engineOn);
+  if (engineOn && (!feed.src || feed.dataset.off === "1")) {
+    feed.src = appUrl("/stream.mjpg");
+    feed.dataset.off = "0";
+  } else if (!engineOn && feed.src) {
+    feed.src = ""; feed.dataset.off = "1";
+  }
+
+  $("s1-metrics").innerHTML =
+    metric("fps", win ? win.fps : "—") +
+    metric("obj/frame", win ? win.objects_per_frame : "—") +
+    metric("infer_ms", win ? fmt(win.infer_ms, "", 1) : "—") +
+    metric("pipeline_ms", win ? fmt(win.pipeline_ms, "", 1) : "—") +
+    metric("draw_ms", win ? fmt(win.draw_ms, "", 1) : "—") +
+    metric("frames", st.bform.stats ? st.bform.stats.totals.frames : 0);
+  if (st.bform.last_error) {
+    $("s1-metrics").innerHTML += metric("error", "died", true);
+  }
+
+  $("s2-metrics").innerHTML =
+    metric("local draw_ms", win ? fmt(win.draw_ms, "", 1) : "—") +
+    metric("overlay_ms", win ? fmt(win.overlay_ms, "", 1) : "—") +
+    metric("target", st.overlay.target_stream) +
+    metric("ttl_ms", st.overlay.ttl_ms) +
+    metric("overlay enabled", st.overlay.enabled ? "yes" : "no");
+
+  var rows = "";
+  var ops = st.routing.ops || {};
+  var deltas = st.routing.deltas_since_mark || {};
+  Object.keys(ops).forEach(function (op) {
+    var d = deltas[op] || {};
+    rows += "<tr><td>" + op + "</td><td>" + (ops[op].backend || "—") +
+      '</td><td class="num">' + (d.hw || 0) +
+      '</td><td class="num">' + (d.sw || 0) +
+      '</td><td class="num">' + (d.fallbacks || 0) + "</td></tr>";
+  });
+  if (!rows) rows = '<tr><td colspan="5">no routed ops yet — start the engine</td></tr>';
+  $("ops-table").querySelector("tbody").innerHTML = rows;
+
+  var a = st.aform || {};
+  $("s4-metrics").innerHTML =
+    metric("running", a.running) +
+    metric("results_seen", a.results_seen === undefined ? (a.consumed || 0) : a.results_seen) +
+    metric("annotated", a.results_annotated === undefined ? "—" : a.results_annotated) +
+    metric("drops", (a.result_queue_drops || 0) + (a.subscribe_dropped || 0)) +
+    metric("last_ms", fmt(a.last_latency_ms, "", 1)) +
+    metric("skew_us", fmt(a.avg_skew_us, "", 0));
+  if (a.last_error || a.consumer_error) {
+    $("s4-metrics").innerHTML += metric("error", "see logs", true);
+  }
+
+  var ev = st.events || {};
+  $("s5-metrics").innerHTML =
+    metric("published", ev.published) +
+    metric("cooldown_s", ev.cooldown_s) +
+    metric("results consumed", ev.results_consumed) +
+    metric("topic", "app/…/detection");
+  $("event-payload").textContent = ev.latest
+    ? JSON.stringify(ev.latest, null, 2) : "— waiting for a gated publish —";
+}
+
+var polling = false;
+function tick() {
+  if (polling) return;
+  polling = true;
+  getJson("/api/status").then(function (env) {
+    if (!env.success) throw new Error(env.error);
+    renderSettings(env.data.settings);
+    renderMetrics(env.data);
+  }).catch(function (err) {
+    toast(lang === "zh" ? "状态拉取失败: " + err : "status fetch failed: " + err);
+  }).then(function () { polling = false; });
+}
+
+/* ---- boot ---- */
+try { lang = localStorage.getItem("teach-lang") || "en"; } catch (e) {}
+applyLang();
+fetchSnippets();
+$("feed").src = appUrl("/stream.mjpg");
+tick();
+setInterval(tick, 1000);
+</script>
+</body>
+</html>
