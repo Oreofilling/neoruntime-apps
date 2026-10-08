@@ -239,6 +239,67 @@ pre.payload {
 .err-box.show { display: block; }
 .note { color: var(--muted); font-size: 12.5px; margin-top: 10px; }
 
+/* ---- teaching panels (the real code behind each station) ---- */
+.teach {
+  margin-top: 14px;
+  border-top: 1px dashed var(--line);
+  padding-top: 10px;
+}
+.teach-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+.teach-head .t {
+  color: var(--muted);
+  font-size: 11.5px;
+  font-family: var(--mono);
+  letter-spacing: .4px;
+  text-transform: uppercase;
+}
+.copy-btn {
+  margin-left: auto;
+  background: var(--panel-2);
+  color: var(--accent);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-family: var(--mono);
+  cursor: pointer;
+}
+.copy-btn:hover { border-color: var(--accent); }
+pre.snippet {
+  background: #0b0f13;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-x: auto;
+  color: #bfe8e3;
+  margin: 8px 0 0;
+  white-space: pre;
+}
+.teach .why { color: var(--muted); font-size: 12.5px; margin: 8px 0 0; }
+.doc-links { margin: 10px 0 0; font-size: 12.5px; }
+.doc-links a { color: var(--accent); text-decoration: none; margin-right: 10px; }
+.doc-links a:hover { text-decoration: underline; }
+.err-lesson {
+  margin-top: 10px;
+  border: 1px solid rgba(246, 173, 85, .4);
+  background: rgba(246, 173, 85, .07);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+}
+.err-lesson .err-title {
+  color: var(--accent-2);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  margin-bottom: 4px;
+}
+.err-lesson > div { margin-top: 2px; }
+.next-steps h2 { margin: 0 0 8px; }
+.next-steps .next-step { margin: 4px 0; font-size: 13.5px; }
+
 /* toast */
 #toast {
   position: fixed;
@@ -455,6 +516,7 @@ function applyLang() {
   });
   document.documentElement.lang = lang;
   document.getElementById("lang-btn").textContent = lang === "en" ? "中文" : "EN";
+  if (TEACH.data) renderTeach();  // teach panels are bilingual too
 }
 
 /* ---- helpers ---- */
@@ -554,6 +616,129 @@ $("lang-btn").addEventListener("click", function () {
   try { localStorage.setItem("teach-lang", lang); } catch (e) {}
   applyLang();
 });
+
+/* ---- teaching panels: the real code behind each station ---- */
+var TEACH = { data: null };
+var TEACH_I18N = {
+  en: {
+    behind: "the real code behind this station",
+    copy: "copy", copied: "copied",
+    lesson: "error lesson", cause: "trap", contract: "contract",
+    docs: "docs:"
+  },
+  zh: {
+    behind: "本站背后的真实代码",
+    copy: "复制", copied: "已复制",
+    lesson: "错误课", cause: "坑", contract: "契约",
+    docs: "文档："
+  }
+};
+
+function el(tag, cls, text) {
+  var n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined && text !== null) n.textContent = text;
+  return n;
+}
+
+function link(label, url) {
+  var a = el("a", null, label);
+  a.href = url;
+  a.target = "_blank";
+  a.rel = "noreferrer";
+  return a;
+}
+
+/* the console serves plain http, so navigator.clipboard is unavailable —
+   fall back to the hidden-textarea + execCommand path */
+function copyText(text, btn) {
+  function fallback() {
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    var ok = false;
+    try { ok = document.execCommand("copy"); } catch (e) {}
+    document.body.removeChild(ta);
+    return ok;
+  }
+  function flash(ok) {
+    btn.textContent = TEACH_I18N[lang].copied;
+    setTimeout(function () { btn.textContent = TEACH_I18N[lang].copy; }, 1600);
+    if (!ok) toast(lang === "zh" ? "复制失败" : "copy failed");
+  }
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(
+      function () { flash(true); },
+      function () { flash(fallback()); });
+  } else {
+    flash(fallback());
+  }
+}
+
+function renderTeach() {
+  var d = TEACH.data;
+  if (!d) return;
+  var L = TEACH_I18N[lang];
+  d.stations.forEach(function (st) {
+    var host = document.getElementById(st.id);
+    if (!host) return;
+    var old = host.querySelector(".teach, .err-lesson");
+    while (old) { old.remove(); old = host.querySelector(".teach, .err-lesson"); }
+    var panel = el("div", "teach");
+    var head = el("div", "teach-head");
+    head.appendChild(el("span", "t", L.behind + " — " + st.file));
+    var btn = el("button", "copy-btn", L.copy);
+    btn.type = "button";
+    btn.addEventListener("click", function () { copyText(st.code, btn); });
+    head.appendChild(btn);
+    panel.appendChild(head);
+    var pre = el("pre", "snippet");
+    pre.textContent = st.code;
+    panel.appendChild(pre);
+    panel.appendChild(el("p", "why", st.note[lang]));
+    if (st.docs && st.docs.length) {
+      var links = el("p", "doc-links");
+      links.appendChild(document.createTextNode(L.docs + " "));
+      st.docs.forEach(function (pair) { links.appendChild(link(pair[0], pair[1])); });
+      panel.appendChild(links);
+    }
+    host.appendChild(panel);
+    (d.errors || []).filter(function (e) { return e.station === st.id; })
+      .forEach(function (e) {
+        var card = el("div", "err-lesson");
+        card.appendChild(el("div", "err-title", "⚠ " + L.lesson + ": " + e.title[lang]));
+        card.appendChild(el("div", null, L.cause + " — " + e.cause[lang]));
+        card.appendChild(el("div", null, L.contract + " — " + e.contract[lang]));
+        host.appendChild(card);
+      });
+  });
+  var wrap = document.querySelector(".stations");
+  var oldNext = document.getElementById("next-steps");
+  if (oldNext) oldNext.remove();
+  var nx = el("section", "station next-steps");
+  nx.id = "next-steps";
+  nx.appendChild(el("h2", null, d.next.title[lang]));
+  d.next.steps.forEach(function (s) { nx.appendChild(el("p", "next-step", s[lang])); });
+  var nl = el("p", "doc-links");
+  d.next.links.forEach(function (pair) { nl.appendChild(link(pair[0], pair[1])); });
+  nx.appendChild(nl);
+  wrap.appendChild(nx);
+}
+
+function fetchSnippets() {
+  getJson("/api/snippets").then(function (env) {
+    if (!env.success) throw new Error(env.error || "snippets unavailable");
+    TEACH.data = env.data;
+    renderTeach();
+  }).catch(function (err) {
+    /* panels are an enhancement — the live stations stand alone; keep a
+       trace so a broken payload is not invisible */
+    console.warn("teach panels unavailable:", err);
+  });
+}
 
 /* ---- status -> UI ---- */
 function renderSettings(s) {
@@ -659,6 +844,7 @@ function tick() {
 /* ---- boot ---- */
 try { lang = localStorage.getItem("teach-lang") || "en"; } catch (e) {}
 applyLang();
+fetchSnippets();
 $("feed").src = appUrl("/stream.mjpg");
 tick();
 setInterval(tick, 1000);

@@ -32,6 +32,21 @@ person / vehicle / face / license_plate）。若设备已注册过
 
 页面默认英文，右上角可切换中文。
 
+## 从 demo 到你自己的 app
+
+v1.2 起每个站点面板都会展示**本站背后的真实代码**——从
+`teaching_app.py` 浓缩的摘录、带复制按钮——以及该站的错误课
+（DMA -2811、路由拒绝、overlay 的 `None` vs `[]`、退出码）。
+同一载荷也可经 `GET /api/snippets` 获取。
+
+1. 复制 [`templates/basic`](../../templates/basic) —— 最小 app 骨架
+   （app.yaml + Dockerfile + build.sh）。
+2. 用五个站点操练的同一套 SDK 接口写你的引擎。
+3. `./build.sh arm64` → 得到 `.neoapp` 包。
+4. 像任何 app 一样安装：`aipc-cli app install <id> <app.yaml> <image.tar>`。
+
+SDK 参考：[neoruntime-ipc-sdk（PyPI）](https://pypi.org/project/neoruntime-ipc-sdk/) · [SDK 源码（python/）](https://github.com/camthink-ai/neoruntime-sdks/tree/main/python)
+
 ## 构建
 
 ```bash
@@ -41,6 +56,15 @@ person / vehicle / face / license_plate）。若设备已注册过
 `python:3.11-slim` + `neoruntime-ipc-sdk`（`sdk.lock` 锁定）+
 `opencv-python-headless` + `numpy`。离线测试：`python3 -m pytest
 tests/ -q`（无需 SDK 或设备——SDK 模块已打桩）。
+
+### 让 demo 保持诚实
+
+- demo 的契约目标 SDK **0.8**（`sdk.lock` 锁定补丁号）。锁漂移出
+  `SUPPORTED_SDK_VERSIONS` 时 `tests/test_sdk_compat.py` 会带指引地
+  失败——先重新验证（离线套件 + 设备 e2e）再扩列表。
+- 页内代码摘录带锚点，必须逐字存在于 `teaching_app.py`；
+  `tests/test_snippets.py` 强制之——重构会让测试红，而不是让课
+  悄悄烂掉。
 
 ## 权限（app.yaml）逐条解释
 
