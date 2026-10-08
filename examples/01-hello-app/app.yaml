@@ -1,0 +1,34 @@
+# 01-hello-app — rung 1 of the examples ladder (01-05).
+#
+# The smallest useful NeoRuntime app: no camera, no model, no device
+# daemons — only the lifecycle every later rung reuses. It requests NO
+# permissions on purpose: nothing asked for, nothing granted.
+# See examples/README.md for the whole ladder.
+
+apiVersion: v1
+kind: Application
+
+metadata:
+  id: hello-app
+  name: Hello App (ladder 01)
+  version: 1.0.0
+  description: Lifecycle-only example - app identity, signals, exit codes
+  author: NeoRuntime Team
+
+spec:
+  image: neoruntime/hello-app:1.0.0
+
+  resources:
+    cpu: "5%"
+    memory: 128Mi
+
+  # DEMO_FAIL=1 makes the app exit 1 on its third tick — restart_policy:
+  # on-failure then restarts it (up to restart_max_retries). Watch with:
+  #   aipc-cli app logs hello-app
+  env:
+    - name: DEMO_FAIL
+      value: "0"
+
+  autostart: false
+  restart_policy: on-failure
+  restart_max_retries: 3

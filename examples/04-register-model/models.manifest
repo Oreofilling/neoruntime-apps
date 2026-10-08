@@ -1,0 +1,4 @@
+# Hailo model zoo compile, pinned to v5.3.0/hailo15h (device firmware line).
+# Format: sha256 <TAB> filename <TAB> url   (fetched by scripts/fetch_models.sh)
+# Same compile as rung 03 — the id it is registered UNDER differs (MODEL_ID).
+557f080afe1dfb9cef02cfea81efc42ba33b8093e9e51cbafd9aae717a7d90e7	yolov8n.hef	https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/v5.3.0/hailo15h/yolov8n.hef

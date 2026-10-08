@@ -27,6 +27,9 @@ showcases/*/models/*.hef
 !examples/object-detection/models/*.hef
 !examples/people-counting/models/*.hef
 !examples/person-detection/models/*.hef
+!examples/03-single-inference/models/*.hef
+!examples/04-register-model/models/*.hef
+!examples/05-live-detection/models/*.hef
 !showcases/parking-lot/models/*.hef
 !showcases/shelf-ops/models/*.hef
 !showcases/gym-ops/models/*.hef

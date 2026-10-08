@@ -1,0 +1,50 @@
+# 04-register-model — rung 4 of the examples ladder: runtime registration.
+#
+# Deliberately NO spec.models block: registering is the app's own job
+# here, and it only works because of allow_register_model: true below.
+# The image still bundles the HEF (models/) as one register source; the
+# host model store (volume) wins when it carries the same compile.
+# See examples/README.md for the whole ladder.
+
+apiVersion: v1
+kind: Application
+
+metadata:
+  id: register-model
+  name: Register Model (ladder 04)
+  version: 1.0.0
+  description: One-shot example - register, list, infer once, unregister a bundled model
+  author: NeoRuntime Team
+
+spec:
+  image: neoruntime/register-model:1.0.0
+
+  resources:
+    cpu: "25%"
+    memory: 256Mi
+
+  volumes:
+    # Host model store, read-only: a device that already carries
+    # yolov8n (matching compile) wins over the bundled copy.
+    - host: /data/aipc/models
+      container: /data/aipc/models
+      readonly: true
+
+  permissions:
+    video:
+      - main.raw
+      - sub.raw
+    inference:
+      max_qps: 10
+      # The whole point of this rung: without this line register_model()
+      # is refused.
+      allow_register_model: true
+
+  env:
+    - name: STREAM_ID
+      value: "main"
+    - name: MODEL_ID
+      value: "yolov8n-demo"
+
+  autostart: false
+  restart_policy: never

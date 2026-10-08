@@ -1,0 +1,43 @@
+# 02-first-frame — rung 2 of the examples ladder: one frame -> JPEG.
+#
+# One-shot by design. restart_policy: never — a dead camera must
+# surface as a failed run, not silently retry. The JPEG lands on the
+# host through the volume below (grab it without docker cp).
+# See examples/README.md for the whole ladder.
+
+apiVersion: v1
+kind: Application
+
+metadata:
+  id: first-frame
+  name: First Frame (ladder 02)
+  version: 1.0.0
+  description: One-shot camera diagnostic - grab one frame, write first-frame.jpg, exit
+  author: NeoRuntime Team
+
+spec:
+  image: neoruntime/first-frame:1.0.0
+
+  resources:
+    cpu: "10%"
+    memory: 192Mi
+
+  permissions:
+    # Video stream access. Devices expose main/sub; dev rigs used third.
+    video:
+      - main.raw
+      - sub.raw
+
+  env:
+    - name: STREAM_ID
+      value: "main"
+    - name: OUT_PATH
+      value: "/app/data/first-frame.jpg"
+
+  volumes:
+    - host: /data/aipc/data/first-frame
+      container: /app/data
+      readonly: false
+
+  autostart: false
+  restart_policy: never
