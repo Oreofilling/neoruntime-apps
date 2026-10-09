@@ -1,0 +1,11 @@
+# model-showcase's set, minus the six-step tree (gone in v2). Build
+# outputs, tests and READMEs never belong in the image context.
+*.tar
+*.neoapp
+.git
+__pycache__
+*.pyc
+build.sh
+tests/
+README.md
+README.zh-CN.md
