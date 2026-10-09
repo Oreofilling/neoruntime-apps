@@ -1,0 +1,28 @@
+name: Documentation issue
+description: A doc page or example is wrong, unclear, or missing
+labels: ["documentation"]
+body:
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options:
+        - wrong / outdated content
+        - unclear explanation
+        - missing topic (gap)
+        - broken link
+    validations:
+      required: true
+  - type: input
+    id: page
+    attributes:
+      label: Page / example
+      placeholder: "e.g. examples/README.md, learning-path stage 3"
+    validations:
+      required: true
+  - type: textarea
+    id: detail
+    attributes:
+      label: What should change?
+    validations:
+      required: true
