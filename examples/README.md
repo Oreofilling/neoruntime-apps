@@ -11,10 +11,10 @@ ladder below is its stage 3.
 
 ## The ladder (start here)
 
-Five rungs, in order. Each one is small enough to read in one sitting
+Seven rungs, in order. Each one is small enough to read in one sitting
 (main files stay under ~150 lines), runs as a real installable app, and
 introduces exactly one new idea. Rung 01 needs no device at all; rungs
-02-05 need a NeoRuntime device with a camera.
+02-07 need a NeoRuntime device with a camera.
 
 | # | Example | New idea | Needs device | Model |
 |---|---------|----------|--------------|-------|
@@ -23,13 +23,17 @@ introduces exactly one new idea. Rung 01 needs no device at all; rungs
 | 3 | [03-single-inference](03-single-inference/) | `spec.models` + results pushed to you (`subscribe`) | yes | yolov8n (bundled) |
 | 4 | [04-register-model](04-register-model/) | runtime `register_model`/`unregister` + `InferencePipeline` | yes | yolov8n (bundled) |
 | 5 | [05-live-detection](05-live-detection/) | the B-form live loop + your own web page (MJPEG) | yes | yolov8n (bundled) |
+| 6 | [06-event-bridge](06-event-bridge/) | the event bus: `publish` results, `subscribe` a wildcard tap | yes | yolov8n (bundled) |
+| 7 | [07-platform-overlay](07-platform-overlay/) | `annotate_result` — the platform draws the boxes, zero pixels in your app | yes | yolov8n (bundled) |
 
-Two ways to get inference, in ladder terms:
+Three destinations for inference results, in ladder terms:
 
 - **A form** — the platform pushes results, you never touch pixels
   (rung 03's `InferenceClient.subscribe`).
 - **B form** — pixels flow through your app: `FdMediaClient.subscribe`
   → `InferencePipeline` → `draw_detections` (rung 05).
+- **Platform overlay** — you push results back and the platform draws:
+  `annotate_result` on every display stream (rung 07).
 
 ## Full examples
 
@@ -72,13 +76,14 @@ SDK installed (the SDK import is stubbed):
 ```bash
 python3 -m pytest examples/01-hello-app/tests examples/02-first-frame/tests \
     examples/03-single-inference/tests examples/04-register-model/tests \
-    examples/05-live-detection/tests -q
+    examples/05-live-detection/tests examples/06-event-bridge/tests \
+    examples/07-platform-overlay/tests -q
 ```
 
 CI builds and smoke-tests every example on each push; the pytest suites
 are for local development.
 
-## Where to go after rung 05
+## Where to go after rung 07
 
 - [sdk-teaching-demo](../showcases/sdk-teaching-demo/) — the five
   interactive stations (overlay, hardware routing, A-form events…);

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """04-register-model — own a model's lifecycle at runtime.
 
-Rung 4 of the examples ladder (01-05). Rung 03's ``spec.models`` is the
+Rung 4 of the examples ladder (01-07). Rung 03's ``spec.models`` is the
 right default, but apps that swap models per deployment, ship several
 of them, or must not clobber an id that is already live use the runtime
 API instead. This rung walks the full lifecycle once, then exits:

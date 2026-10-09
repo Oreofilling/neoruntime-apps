@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """05-live-detection — a live detection loop with its own web page.
 
-Rung 5, the capstone of the examples ladder (01-05) and the code-level
+Rung 5 of the examples ladder (01-07) — capstone of the pixel path and the code-level
 twin of sdk-teaching-demo station 1. Pixels flow through YOUR app —
 the "B form": you pull frames, you run inference, you draw, you serve.
 

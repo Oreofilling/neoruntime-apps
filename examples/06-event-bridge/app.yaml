@@ -1,0 +1,63 @@
+# 06-event-bridge — rung 6 of the examples ladder: the event bus.
+#
+# Inference is rung 03's A form (declared model, platform-run results).
+# The new dependency is the EVENT topic allow-list: publish anything
+# under app/event-bridge/* — the topic prefix app/<app-id>/* is the
+# conventional namespace an app owns for itself.
+# See examples/README.md for the whole ladder.
+
+apiVersion: v1
+kind: Application
+
+metadata:
+  id: event-bridge
+  name: Event Bridge (ladder 06)
+  version: 1.0.0
+  description: Long-running example - detections republished as bus events, tapped back on a wildcard topic
+  author: NeoRuntime Team
+
+spec:
+  image: neoruntime/event-bridge:1.0.0
+
+  resources:
+    cpu: "25%"
+    memory: 256Mi
+
+  # Declarative model dependency, like rung 03 (bundled in the image,
+  # fetched by scripts/fetch_models.sh, sha256-pinned via models.manifest).
+  models:
+    detector:
+      id: yolov8n
+      path: /opt/aipc/models/yolov8n.hef
+      type: detection
+      required: true
+
+  permissions:
+    video:
+      - main.raw
+      - sub.raw
+    inference:
+      max_qps: 10
+      max_concurrent: 1
+    events:
+      publish:
+        - app/event-bridge/*
+
+  env:
+    - name: STREAM_ID
+      value: "main"
+    - name: MIN_SCORE
+      value: "0.3"
+    - name: EVENT_COOLDOWN_S
+      value: "2"
+
+  autostart: false
+  restart_policy: on-failure
+  restart_max_retries: 3
+
+  healthcheck:
+    enabled: true
+    interval: 30s
+    timeout: 5s
+    start_period: 10s
+    retries: 3

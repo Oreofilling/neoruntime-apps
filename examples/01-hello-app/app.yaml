@@ -1,4 +1,4 @@
-# 01-hello-app — rung 1 of the examples ladder (01-05).
+# 01-hello-app — rung 1 of the examples ladder (01-07).
 #
 # The smallest useful NeoRuntime app: no camera, no model, no device
 # daemons — only the lifecycle every later rung reuses. It requests NO
