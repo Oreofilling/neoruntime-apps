@@ -36,6 +36,22 @@ the existing registration is reused.
 
 English is the default page language; toggle 中文 in the header.
 
+## From this demo to your own app
+
+Since v1.2 every station panel shows **the real code behind it** — a
+condensed excerpt of `teaching_app.py` with a copy button — plus that
+station's error lesson (DMA -2811, routing refusals, overlay `None` vs
+`[]`, exit codes). The same payload is served at `GET /api/snippets`.
+
+1. Copy [`templates/basic`](../../templates/basic) — the minimal app
+   skeleton (app.yaml + Dockerfile + build.sh).
+2. Write your engine against the same SDK surface the five stations
+   drive.
+3. `./build.sh arm64` → a `.neoapp` bundle.
+4. Install like any app: `aipc-cli app install <id> <app.yaml> <image.tar>`.
+
+SDK reference: [neoruntime-ipc-sdk on PyPI](https://pypi.org/project/neoruntime-ipc-sdk/) · [SDK source (python/)](https://github.com/camthink-ai/neoruntime-sdks/tree/main/python)
+
 ## Build
 
 ```bash
@@ -46,6 +62,16 @@ English is the default page language; toggle 中文 in the header.
 `opencv-python-headless` + `numpy`. Run the offline test suite with
 `python3 -m pytest tests/ -q` (no SDK or device needed — the SDK module
 is stubbed).
+
+### Keeping the demo honest
+
+- The demo's contracts target SDK **0.8** (`sdk.lock` pins the patch).
+  `tests/test_sdk_compat.py` fails with instructions when the lock
+  drifts outside `SUPPORTED_SDK_VERSIONS` — re-verify (offline suite +
+  device e2e) before extending it.
+- The in-page code excerpts carry anchors that must stay verbatim in
+  `teaching_app.py`; `tests/test_snippets.py` enforces them, so a
+  refactor fails the suite instead of silently rotting the lesson.
 
 ## Permissions (app.yaml) — why each one
 

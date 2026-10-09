@@ -20,12 +20,12 @@ kind: Application
 metadata:
   id: sdk-teaching-demo
   name: SDK Teaching Demo
-  version: 1.1.0
-  description: Interactive single-page teaching app for neoruntime-ipc-sdk (B-form, overlay paths, routing, A-form, events)
+  version: 1.2.0
+  description: Interactive single-page teaching app for neoruntime-ipc-sdk (B-form, overlay paths, routing, A-form, events, in-page real-code teaching panels)
   author: NeoRuntime Team
 
 spec:
-  image: neoruntime/sdk-teaching-demo:1.1.0
+  image: neoruntime/sdk-teaching-demo:1.2.0
 
   # Host model store — register paths must be host-real for ai-runtime.
   # The image also bundles the vendored HEF under /opt/aipc/bundled-models

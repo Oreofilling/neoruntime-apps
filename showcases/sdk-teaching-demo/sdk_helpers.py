@@ -46,6 +46,11 @@ MIN_SCORE_MIN, MIN_SCORE_MAX = 0.05, 0.9
 
 REFUSAL_OP = "teaching.no_such_leg"  # unregistered op: routing refusal demo
 
+# Major.minor SDK versions this demo's contracts target (sdk.lock pins the
+# exact patch). tests/test_sdk_compat.py fails with guidance when sdk.lock
+# drifts outside this list — update it deliberately, not by accident.
+SUPPORTED_SDK_VERSIONS = ("0.8",)
+
 AFORM_STATUS_FIELDS = (
     "running", "results_seen", "results_annotated", "annotate_errors",
     "result_queue_drops", "subscribe_dropped", "last_error",

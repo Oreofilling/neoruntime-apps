@@ -97,6 +97,17 @@ def test_refusal_endpoint_returns_message(server):
     assert "HardwareUnavailable" in envelope["data"]["message"]
 
 
+def test_snippets_endpoint_serves_teach_payload(server):
+    status, _, body = request(server, "GET", "/api/snippets")
+    envelope = json.loads(body)
+    assert status == 200 and envelope["success"] is True
+    data = envelope["data"]
+    assert [s["id"] for s in data["stations"]] == [
+        "s1", "s2", "s3", "s4", "s5"]
+    assert data["errors"], "error lessons must ride the payload"
+    assert data["next"]["steps"]
+
+
 def test_stream_mjpeg_first_chunk(server, app):
     app.buffer.update(b"frame-one-bytes")  # 15-byte payload
     conn = http.client.HTTPConnection("127.0.0.1",

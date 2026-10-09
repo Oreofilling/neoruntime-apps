@@ -85,6 +85,22 @@ jobs:
         with:
           path: apps
 
+      # teaching demo only: its offline suite guards the SDK-compat and
+      # snippet-anchor contracts; runs before any QEMU time is spent
+      - name: Set up Python
+        if: matrix.showcase == 'sdk-teaching-demo'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Offline test suite (sdk-teaching-demo)
+        if: matrix.showcase == 'sdk-teaching-demo'
+        working-directory: apps/showcases/sdk-teaching-demo
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet pytest numpy opencv-python-headless
+          python -m pytest tests/ -q
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 

@@ -15,6 +15,7 @@ containerized NeoRuntime apps.
 | Parking Lot | [parking-lot-latest-arm64.neoapp](https://github.com/camthink-ai/neoruntime-apps/releases/download/showcase-bundles-latest/parking-lot-latest-arm64.neoapp) |
 | Gym Ops | [gym-ops-latest-arm64.neoapp](https://github.com/camthink-ai/neoruntime-apps/releases/download/showcase-bundles-latest/gym-ops-latest-arm64.neoapp) |
 | Shelf Ops | [shelf-ops-latest-arm64.neoapp](https://github.com/camthink-ai/neoruntime-apps/releases/download/showcase-bundles-latest/shelf-ops-latest-arm64.neoapp) |
+| SDK Teaching Demo | [sdk-teaching-demo-latest-arm64.neoapp](https://github.com/camthink-ai/neoruntime-apps/releases/download/showcase-bundles-latest/sdk-teaching-demo-latest-arm64.neoapp) |
 
 [All releases](https://github.com/camthink-ai/neoruntime-apps/releases)
 
@@ -42,6 +43,7 @@ containerized NeoRuntime apps.
 | `showcases/parking-lot/` | Showcase | Parking-lot vehicle and plate extraction reference |
 | `showcases/gym-ops/` | Showcase | Gym pose coaching and occupancy reference |
 | `showcases/shelf-ops/` | Showcase | Shelf slot recognition: slot-anchored CLIP A–E classification, empty-slot & sales heatmap reference |
+| `showcases/sdk-teaching-demo/` | Showcase | Interactive single-page SDK teaching app: five live stations (B-form loop, overlay paths, routing, A-form, events) with the real code behind each one |
 
 ## Development
 
@@ -62,7 +64,10 @@ application manifest for deployment to an NeoRuntime device. Images install
 is pinned by `sdk.lock` at the repo root (reproducible, offline-friendly).
 Set `NEORUNTIME_SDK_VERSION=<version>` to build against a different release, or
 `NEORUNTIME_SDK_VERSION=latest` to float to the newest PyPI release. A weekly
-GitHub Actions probe canaries new SDK releases and opens a bump PR.
+GitHub Actions probe canaries new SDK releases and opens a bump PR. When such a
+bump passes a version `showcases/sdk-teaching-demo` has been verified against,
+its CI test step fails with instructions — re-verify the demo (offline suite +
+device e2e), then extend `SUPPORTED_SDK_VERSIONS` in `sdk_helpers.py`.
 
 Runtime credentials, device addresses, and generated `.neoapp` packages are
 intentionally not committed. Use environment variables and local deployment

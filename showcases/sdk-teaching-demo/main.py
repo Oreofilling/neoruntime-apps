@@ -13,6 +13,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from station_snippets import payload as snippets_payload
 from teaching_app import TeachingApp
 
 HTTP_PORT = int(os.environ.get("HTTP_PORT", "8090"))
@@ -32,7 +33,7 @@ INDEX_HTML = _load_index()
 
 class ApiHandler(BaseHTTPRequestHandler):
     app: TeachingApp = None  # injected via the BoundHandler subclass
-    server_version = "sdk-teaching-demo/1.1"
+    server_version = "sdk-teaching-demo/1.2"
 
     def do_GET(self):
         path = self.path.split("?", 1)[0]
@@ -52,6 +53,9 @@ class ApiHandler(BaseHTTPRequestHandler):
         elif path == "/api/status":
             self._send_json(200, {"success": True,
                                   "data": self.app.status()})
+        elif path == "/api/snippets":
+            self._send_json(200, {"success": True,
+                                  "data": snippets_payload()})
         else:
             self._send_json(404, {"success": False, "error": "not found"})
 

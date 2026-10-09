@@ -1,0 +1,65 @@
+# 05-live-detection — rung 5 of the examples ladder (capstone).
+#
+# The B form, end to end: pixels flow through the app (subscribe frames
+# -> pipeline -> draw -> MJPEG), served from the app's own web page on
+# :8090. register_web_url at startup lets the console reverse-proxy it
+# under /apps/live-detection/. Code twin of sdk-teaching-demo station 1.
+# See examples/README.md for the whole ladder.
+
+apiVersion: v1
+kind: Application
+
+metadata:
+  id: live-detection
+  name: Live Detection (ladder 05)
+  version: 1.0.0
+  description: Live detection loop - frames through the app, drawn locally, served as MJPEG
+  author: NeoRuntime Team
+
+spec:
+  image: neoruntime/live-detection:1.0.0
+
+  resources:
+    cpu: "50%"
+    memory: 256Mi
+
+  # Declarative model, like rung 03: platform registers + authorizes at
+  # install and injects AIPC_MODEL_detector.
+  models:
+    detector:
+      id: yolov8n
+      path: /opt/aipc/models/yolov8n.hef
+      type: detection
+      required: true
+
+  permissions:
+    video:
+      - main.raw
+      - sub.raw
+    inference:
+      max_qps: 30
+      max_concurrent: 1
+
+    network:
+      mode: host
+      inbound:
+        - 8090
+
+  env:
+    - name: STREAM_ID
+      value: "main"
+    - name: HTTP_PORT
+      value: "8090"
+    - name: MIN_SCORE
+      value: "0.3"
+
+  autostart: false
+  restart_policy: on-failure
+  restart_max_retries: 3
+
+  healthcheck:
+    enabled: true
+    interval: 30s
+    timeout: 5s
+    start_period: 10s
+    retries: 3
