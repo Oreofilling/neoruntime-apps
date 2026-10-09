@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """02-first-frame — your first camera frame, as a file.
 
-Rung 2 of the examples ladder (01-05). No subscription, no model: grab
+Rung 2 of the examples ladder (01-07). No subscription, no model: grab
 ONE frame from a video stream, write it as a JPEG, exit. It is a
 one-shot diagnostic — run it to prove that camera-daemon, the stream
 id, and the SDK socket all line up before you build anything heavier.

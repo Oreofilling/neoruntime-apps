@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """01-hello-app — the smallest useful NeoRuntime app.
 
-Rung 1 of the examples ladder (01-05). No camera, no model, no device
+Rung 1 of the examples ladder (01-07). No camera, no model, no device
 daemons: it exercises only the application lifecycle that every later
 rung reuses.
 

@@ -30,6 +30,8 @@ showcases/*/models/*.hef
 !examples/03-single-inference/models/*.hef
 !examples/04-register-model/models/*.hef
 !examples/05-live-detection/models/*.hef
+!examples/06-event-bridge/models/*.hef
+!examples/07-platform-overlay/models/*.hef
 !showcases/parking-lot/models/*.hef
 !showcases/shelf-ops/models/*.hef
 !showcases/gym-ops/models/*.hef

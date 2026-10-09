@@ -1,0 +1,61 @@
+# 07-platform-overlay — rung 7 of the examples ladder: platform-side boxes.
+#
+# Inference is rung 03's A form (declared model, platform-run results).
+# The new dependency is the overlay's event topic: annotate_result()
+# rides the bus on inference/<stream>, so the publish allow-list needs
+# exactly that topic — this is ALL it takes to draw on device streams.
+# See examples/README.md for the whole ladder.
+
+apiVersion: v1
+kind: Application
+
+metadata:
+  id: platform-overlay
+  name: Platform Overlay (ladder 07)
+  version: 1.0.0
+  description: Long-running example - results pushed to the platform overlay, boxes drawn with zero pixels in the app
+  author: NeoRuntime Team
+
+spec:
+  image: neoruntime/platform-overlay:1.0.0
+
+  resources:
+    cpu: "25%"
+    memory: 256Mi
+
+  # Declarative model dependency, like rung 03 (bundled in the image,
+  # fetched by scripts/fetch_models.sh, sha256-pinned via models.manifest).
+  models:
+    detector:
+      id: yolov8n
+      path: /opt/aipc/models/yolov8n.hef
+      type: detection
+      required: true
+
+  permissions:
+    video:
+      - main.raw
+      - sub.raw
+    inference:
+      max_qps: 10
+      max_concurrent: 1
+    events:
+      publish:
+        - inference/main
+
+  env:
+    - name: STREAM_ID
+      value: "main"
+    - name: OVERLAY_TTL_MS
+      value: "1500"
+
+  autostart: false
+  restart_policy: on-failure
+  restart_max_retries: 3
+
+  healthcheck:
+    enabled: true
+    interval: 30s
+    timeout: 5s
+    start_period: 10s
+    retries: 3

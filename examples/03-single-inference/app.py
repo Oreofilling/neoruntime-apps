@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """03-single-inference — your first inference result.
 
-Rung 3 of the examples ladder (01-05). The model is DECLARED in
+Rung 3 of the examples ladder (01-07). The model is DECLARED in
 app.yaml (spec.models): the platform registers it at install time,
 authorizes the id for this app, and injects the resolved id as
 AIPC_MODEL_detector. The code only subscribes to platform-run stream
