@@ -4,6 +4,11 @@ Runnable, copyable apps built on the
 [NeoRuntime IPC SDK](https://pypi.org/project/neoruntime-ipc-sdk/)
 (`neoruntime-ipc-sdk`, version pinned by [`sdk.lock`](../sdk.lock)).
 
+New to the SDK? The
+[learning path](https://github.com/camthink-ai/neoruntime-sdks/blob/main/python/docs/learning-path.rst)
+in the SDK docs walks from a first inference to shipping an app; the
+ladder below is its stage 3.
+
 ## The ladder (start here)
 
 Five rungs, in order. Each one is small enough to read in one sitting
@@ -81,3 +86,6 @@ are for local development.
 - [templates/basic](../templates/basic/) — starting point for your own.
 - [showcases](../showcases/) — complete production-shaped apps
   (parking-lot, model-showcase, shelf-ops, gym-ops).
+- The SDK's [learning path](https://github.com/camthink-ai/neoruntime-sdks/blob/main/python/docs/learning-path.rst)
+  stages 4-5 — packaging a `.neoapp`, restart policies, diagnostics,
+  and the error lessons.
