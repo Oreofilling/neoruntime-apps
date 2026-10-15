@@ -71,13 +71,21 @@ jobs:
 
   build:
     needs: discover
-    runs-on: ubuntu-latest
+    # Native arm64 runner: free for public repos and several times faster
+    # than x64 + QEMU emulation for these linux/arm64 images. The matrix
+    # only lists arm64 — an amd64 entry would need an x64 runner label
+    # instead of building natively here.
+    runs-on: ubuntu-24.04-arm
     strategy:
       fail-fast: false
       matrix:
         showcase: ${{ fromJSON(needs.discover.outputs.showcases) }}
         arch:
           - arm64
+    env:
+      # Fork PRs cannot write this repo's Actions cache, and a rejected
+      # cache export would fail the buildx build — restore only there.
+      AIPC_DOCKER_CACHE_MODE: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'read' || 'write' }}
 
     steps:
       - name: Checkout apps repository
@@ -101,9 +109,6 @@ jobs:
           python -m pip install --quiet pytest numpy opencv-python-headless
           python -m pytest tests/ -q
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -122,7 +127,9 @@ jobs:
           name: ${{ matrix.showcase }}-${{ matrix.arch }}-bundle
           path: apps/dist/showcases/${{ matrix.showcase }}-*.neoapp
           if-no-files-found: error
-          retention-days: 14
+          # The release job consumes these immediately on push/tag events;
+          # 3 days only leaves margin for manual inspection of PR builds.
+          retention-days: 3
 
   release:
     needs: build

@@ -79,8 +79,21 @@ fi
 
 # Build
 echo "Building Docker image..."
+# GHA layer cache: only usable inside Actions runners (needs
+# ACTIONS_RUNTIME_TOKEN). Fork PRs (AIPC_DOCKER_CACHE_MODE=read) cannot write
+# the base repo's cache and a rejected export would fail the build, so they
+# restore only. Local runs get no cache flags.
+GHA_CACHE_FLAGS=""
+if [ -n "${ACTIONS_RUNTIME_TOKEN:-}" ]; then
+    GHA_CACHE_FLAGS="--cache-from type=gha"
+    if [ "${AIPC_DOCKER_CACHE_MODE:-}" != "read" ]; then
+        GHA_CACHE_FLAGS="$GHA_CACHE_FLAGS --cache-to type=gha,mode=min"
+    fi
+fi
 if [ "$ARCH" = "arm64" ]; then
+    # shellcheck disable=SC2086
     docker buildx build --platform linux/arm64 --load \
+        $GHA_CACHE_FLAGS \
         --build-arg SDK_VERSION="$SDK_VERSION" -t "$IMAGE_TAG" "$APP_DIR"
 else
     docker build --build-arg SDK_VERSION="$SDK_VERSION" -t "$IMAGE_TAG" "$APP_DIR"

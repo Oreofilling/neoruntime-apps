@@ -4,8 +4,12 @@ on:
   push:
     branches:
       - main
+    # Narrower than pull_request on purpose: example changes are already
+    # validated by the PR run. The post-merge push only re-runs for build
+    # infra and sdk.lock — notably the sdk-probe bot's PRs are opened with
+    # GITHUB_TOKEN (no PR CI fires), so this push run is their full-matrix
+    # validation on main.
     paths:
-      - "examples/**"
       - "scripts/build_app.sh"
       - "scripts/fetch_models.sh"
       - "scripts/resolve_sdk_version.sh"
@@ -75,20 +79,21 @@ jobs:
 
   build:
     needs: discover
-    runs-on: ubuntu-latest
+    # Native arm64 runner: free for public repos and several times faster
+    # than x64 + QEMU emulation for these linux/arm64 images.
+    runs-on: ubuntu-24.04-arm
     strategy:
       fail-fast: false
       matrix:
         example: ${{ fromJSON(needs.discover.outputs.examples) }}
+    env:
+      # Fork PRs cannot write this repo's Actions cache, and a rejected
+      # cache export would fail the buildx build — restore only there.
+      AIPC_DOCKER_CACHE_MODE: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'read' || 'write' }}
 
     steps:
       - name: Checkout apps repository
         uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

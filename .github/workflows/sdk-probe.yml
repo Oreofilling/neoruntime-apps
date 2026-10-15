@@ -20,19 +20,14 @@ concurrency:
 
 jobs:
   probe:
-    runs-on: ubuntu-latest
+    # Native arm64 runner. Most weeks this job only compares two versions, so
+    # the docker toolchain setup is deferred past that check and skipped
+    # entirely when the lock is already current.
+    runs-on: ubuntu-24.04-arm
 
     steps:
       - name: Checkout apps repository
         uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
 
       - name: Resolve latest SDK on PyPI
         id: latest
@@ -54,6 +49,10 @@ jobs:
         run: >
           echo "sdk.lock (${{ steps.locked.outputs.version }}) already tracks
           the PyPI latest — nothing to do."
+
+      - name: Set up Docker Buildx
+        if: steps.latest.outputs.version != steps.locked.outputs.version
+        uses: docker/setup-buildx-action@v3
 
       - name: Canary build with the new SDK
         if: steps.latest.outputs.version != steps.locked.outputs.version
